@@ -1,10 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import Script from "next/script";
+import { useEffect, useRef, useState } from "react";
 
 type Person = { id: number; name: string; phone: string; x: number; y: number; affected: boolean };
 type Shelter = { id: number; name: string; x: number; y: number; capacity: number; occupancy: number };
 type Stage = "standby" | "active" | "routed" | "alerted";
+type LatLng = { lat: number; lng: number };
+
+type GoogleMapsApi = {
+  maps: {
+    Map: new (element: HTMLElement, options: Record<string, unknown>) => GoogleMapInstance;
+    Marker: new (options: Record<string, unknown>) => GoogleOverlay;
+    Polygon: new (options: Record<string, unknown>) => GoogleOverlay;
+    Polyline: new (options: Record<string, unknown>) => GoogleOverlay;
+  };
+};
+type GoogleMapInstance = { setCenter: (center: LatLng) => void };
+type GoogleOverlay = { setMap: (map: GoogleMapInstance | null) => void };
 
 const demoPeople: Person[] = Array.from({ length: 20 }, (_, index) => ({
   id: index + 1,
@@ -21,11 +34,100 @@ const shelters: Shelter[] = [
   { id: 3, name: "Central Stadium", x: 84, y: 77, capacity: 1200, occupancy: 612 },
 ];
 
+const mapCenter: LatLng = { lat: 16.5062, lng: 80.6480 };
+const googleMapStyles = [
+  { elementType: "geometry", stylers: [{ color: "#26343b" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#b9c8c9" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#26343b" }] },
+  { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#53666b" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#46585d" }] },
+  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#36484d" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#65777a" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#174c59" }] },
+  { featureType: "poi", stylers: [{ visibility: "simplified" }] },
+];
+
+function toCoordinates(x: number, y: number): LatLng {
+  return { lat: mapCenter.lat + (50 - y) * 0.0022, lng: mapCenter.lng + (x - 50) * 0.0024 };
+}
+
+function GoogleMapSurface({ stage, onSelect, ready }: { stage: Stage; onSelect: (person: Person) => void; ready: boolean }) {
+  const mapElement = useRef<HTMLDivElement>(null);
+  const mapInstance = useRef<GoogleMapInstance | null>(null);
+  const overlays = useRef<GoogleOverlay[]>([]);
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+
+  useEffect(() => {
+    const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
+    if (!mapsApi || !mapElement.current) return;
+
+    if (!mapInstance.current) {
+      mapInstance.current = new mapsApi.maps.Map(mapElement.current, {
+        center: mapCenter,
+        zoom: 13,
+        streetViewControl: false,
+        mapTypeControl: false,
+        fullscreenControl: false,
+        styles: googleMapStyles,
+      });
+    }
+
+    overlays.current.forEach((overlay) => overlay.setMap(null));
+    const nextOverlays: GoogleOverlay[] = [];
+
+    shelters.forEach((shelter) => {
+      nextOverlays.push(new mapsApi.maps.Marker({
+        map: mapInstance.current,
+        position: toCoordinates(shelter.x, shelter.y),
+        title: shelter.name,
+        label: { text: "S", color: "#ffffff", fontWeight: "700" },
+        icon: { path: "M 0,0 m -13,0 a 13,13 0 1,0 26,0 a 13,13 0 1,0 -26,0", fillColor: "#2ca66f", fillOpacity: 1, strokeColor: "#d9ffea", strokeWeight: 2, scale: 1 },
+      }));
+    });
+
+    demoPeople.forEach((person) => {
+      const marker = new mapsApi.maps.Marker({
+        map: mapInstance.current,
+        position: toCoordinates(person.x, person.y),
+        title: person.name,
+        icon: { path: "M 0,0 m -6,0 a 6,6 0 1,0 12,0 a 6,6 0 1,0 -12,0", fillColor: person.affected && stage !== "standby" ? "#f05d5e" : "#72d6a3", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 1.5, scale: 1 },
+      }) as GoogleOverlay & { addListener?: (event: string, callback: () => void) => void };
+      marker.addListener?.("click", () => onSelect(person));
+      nextOverlays.push(marker);
+    });
+
+    if (stage !== "standby") {
+      const hazardPath = [
+        toCoordinates(27, 32), toCoordinates(71, 28), toCoordinates(82, 50),
+        toCoordinates(68, 72), toCoordinates(35, 75), toCoordinates(22, 55),
+      ];
+      nextOverlays.push(new mapsApi.maps.Polygon({ map: mapInstance.current, paths: hazardPath, fillColor: "#d83d4b", fillOpacity: 0.27, strokeColor: "#f05d5e", strokeOpacity: 0.95, strokeWeight: 2 }));
+    }
+
+    if (stage === "routed" || stage === "alerted") {
+      affectedPeople.forEach((person, index) => {
+        const shelter = shelters[index % shelters.length];
+        const start = toCoordinates(person.x, person.y);
+        const finish = toCoordinates(shelter.x, shelter.y);
+        nextOverlays.push(new mapsApi.maps.Polyline({ map: mapInstance.current, path: [start, { lat: (start.lat + finish.lat) / 2 + 0.018, lng: (start.lng + finish.lng) / 2 }, finish], strokeColor: "#a6f0bf", strokeOpacity: 0.9, strokeWeight: 3, icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: 1, strokeColor: "#a6f0bf", scale: 3 }, offset: "0", repeat: "12px" }] }));
+      });
+    }
+
+    overlays.current = nextOverlays;
+    if (apiKey && mapInstance.current) mapInstance.current.setCenter(mapCenter);
+  }, [stage, onSelect, apiKey, ready]);
+
+  return apiKey ? <div className="google-map" ref={mapElement} /> : <div className="map-key-missing">Add <code>NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code> to load Google Maps.</div>;
+}
+
+const affectedPeople = demoPeople.filter((person) => person.affected);
+
 export default function Home() {
   const [stage, setStage] = useState<Stage>("standby");
   const [selected, setSelected] = useState<Person | null>(null);
   const [panel, setPanel] = useState("overview");
-  const affected = demoPeople.filter((person) => person.affected);
+  const [mapsReady, setMapsReady] = useState(false);
+  const affected = affectedPeople;
 
   function loadDemo() {
     setStage("standby");
@@ -35,6 +137,7 @@ export default function Home() {
 
   return (
     <main className="command-shell">
+      {process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY && <Script src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
       <header className="topbar">
         <div className="brand"><span className="brand-mark">+</span><span>SafePath <b>AI</b></span><small>EMERGENCY OPERATIONS</small></div>
         <div className="top-actions"><span className="demo-pill"><i /> DEMO MODE</span><span className="sync"><i /> SYSTEMS ONLINE</span><button className="icon-button" aria-label="Settings">⚙</button><div className="operator">OP <span>AO</span></div></div>
@@ -60,11 +163,7 @@ export default function Home() {
 
         <div className="map-panel">
           <div className="map-toolbar"><button className="search-button">⌕ <span>Search people, places, or coordinates</span></button><button className="map-button">Layers</button><button className="map-button">◎</button></div>
-          <div className="map-canvas"><div className="map-label city">NAIROBI <small>METRO AREA</small></div><div className="road road-one" /><div className="road road-two" /><div className="road road-three" /><div className="water" />
-            {stage !== "standby" && <div className={`hazard-zone ${stage !== "standby" ? "hazard-active" : ""}`}><span>! FLOOD ZONE <small>CRITICAL</small></span></div>}
-            {stage === "routed" || stage === "alerted" ? affected.map((person, index) => <svg className="route-line" key={`route-${person.id}`} viewBox="0 0 100 100" preserveAspectRatio="none"><path d={`M ${person.x} ${person.y} Q ${(person.x + shelters[index % 3].x) / 2} ${Math.min(person.y, shelters[index % 3].y) - 12} ${shelters[index % 3].x} ${shelters[index % 3].y}`} /></svg>) : null}
-            {shelters.map((shelter) => <button key={shelter.id} className="shelter-marker" style={{ left: `${shelter.x}%`, top: `${shelter.y}%` }} onClick={() => setPanel("shelters")}><i>⌂</i><span>{shelter.name}</span></button>)}
-            {demoPeople.map((person) => <button key={person.id} className={`person-marker ${person.affected && stage !== "standby" ? "risk" : "safe"} ${selected?.id === person.id ? "chosen" : ""}`} style={{ left: `${person.x}%`, top: `${person.y}%` }} onClick={() => setSelected(person)} aria-label={person.name}><i /></button>)}
+          <div className="map-canvas"><GoogleMapSurface stage={stage} onSelect={setSelected} ready={mapsReady} />
             <div className="map-key"><span><i className="key-safe" /> Safe</span><span><i className="key-risk" /> At risk</span><span><i className="key-zone" /> Hazard zone</span></div><div className="zoom-controls"><button>+</button><button>−</button></div><div className="map-attribution">Map data © SafePath simulation</div>
             {selected && <div className="person-card"><button className="close-card" onClick={() => setSelected(null)}>×</button><span className="eyebrow">PERSON PROFILE</span><h2>{selected.name}</h2><p>{selected.phone}</p><div className="card-status"><i className={selected.affected && stage !== "standby" ? "key-risk" : "key-safe"} /> {selected.affected && stage !== "standby" ? "AT RISK" : "SAFE"}</div>{selected.affected && stage !== "standby" && <div className="evacuation"><span>RECOMMENDED DESTINATION</span><strong>Green Primary School</strong><small>1.9 km · 8 min estimated</small></div>}</div>}
           </div>
