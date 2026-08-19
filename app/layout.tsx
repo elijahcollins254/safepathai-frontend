@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Nia",
-  description: "SafePath AI",
+  title: "SafePath AI | Emergency Operations",
+  description: "Disaster response simulation command center",
 };
 
 export default function RootLayout({
