@@ -131,7 +131,11 @@ export default function Home() {
   const [alertStatus, setAlertStatus] = useState<AlertStatus>("idle");
   const [testRecipient, setTestRecipient] = useState("");
   const affected = affectedPeople;
-  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
+  const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
+  const normalizedApiBaseUrl = configuredApiBaseUrl.replace(/\/+$/, "");
+  const apiBaseUrl = normalizedApiBaseUrl.endsWith("/api")
+    ? normalizedApiBaseUrl
+    : `${normalizedApiBaseUrl}/api`;
 
   function loadDemo() {
     setStage("standby");
