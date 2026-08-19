@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 type Person = { id: number; name: string; phone: string; x: number; y: number; affected: boolean };
 type Shelter = { id: number; name: string; x: number; y: number; capacity: number; occupancy: number };
 type Stage = "standby" | "active" | "routed" | "alerted";
+type AlertStatus = "idle" | "sending" | "sent" | "error";
 type LatLng = { lat: number; lng: number };
 
 type GoogleMapsApi = {
@@ -55,7 +56,7 @@ function GoogleMapSurface({ stage, onSelect, ready }: { stage: Stage; onSelect: 
   const mapElement = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<GoogleMapInstance | null>(null);
   const overlays = useRef<GoogleOverlay[]>([]);
-  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
 
   useEffect(() => {
     const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
@@ -127,17 +128,52 @@ export default function Home() {
   const [selected, setSelected] = useState<Person | null>(null);
   const [panel, setPanel] = useState("overview");
   const [mapsReady, setMapsReady] = useState(false);
+  const [alertStatus, setAlertStatus] = useState<AlertStatus>("idle");
+  const [testRecipient, setTestRecipient] = useState("");
   const affected = affectedPeople;
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
 
   function loadDemo() {
     setStage("standby");
     setSelected(null);
     setPanel("overview");
+    setAlertStatus("idle");
+  }
+
+  async function sendSms(recipients: string[], markAlert = false) {
+    setAlertStatus("sending");
+    const message = "SAFEPATH ALERT: Flooding detected near your location. Avoid River Road and proceed to Green Primary School using the recommended route. Estimated travel time: 8 minutes.";
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/alert/sms/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, recipients }),
+      });
+      if (!response.ok) throw new Error("SMS service rejected the request");
+      setAlertStatus("sent");
+      if (markAlert) setStage("alerted");
+    } catch {
+      setAlertStatus("error");
+      if (markAlert) setStage("routed");
+    }
+  }
+
+  function sendEmergencyAlerts() {
+    void sendSms(affected.map((person) => person.phone), true);
+  }
+
+  function sendTestSms() {
+    if (!/^\+[1-9]\d{7,14}$/.test(testRecipient.replace(/[\s()-]/g, ""))) {
+      setAlertStatus("error");
+      return;
+    }
+    void sendSms([testRecipient], false);
   }
 
   return (
     <main className="command-shell">
-      {process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY && <Script src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
+      {(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY) && <Script src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY}`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
       <header className="topbar">
         <div className="brand"><span className="brand-mark">+</span><span>SafePath <b>AI</b></span><small>EMERGENCY OPERATIONS</small></div>
         <div className="top-actions"><span className="demo-pill"><i /> DEMO MODE</span><span className="sync"><i /> SYSTEMS ONLINE</span><button className="icon-button" aria-label="Settings">⚙</button><div className="operator">OP <span>AO</span></div></div>
@@ -154,7 +190,7 @@ export default function Home() {
 
           {panel === "overview" && <>
             <div className="control-section"><div className="section-title"><span>DISASTER CONTROLS</span><button className="more">•••</button></div><label className="field-label">DISASTER TYPE<select defaultValue="Flood"><option>Flood</option><option>Wildfire</option><option>Landslide</option></select></label><label className="field-label">SEVERITY<div className="severity-options"><button className="low">Low</button><button className="medium">Med</button><button className="high">High</button><button className="critical active">Critical</button></div></label></div>
-            <div className="simulation-section"><div className="section-title"><span>SIMULATION</span><span className="stage-label">{stage === "standby" ? "READY" : stage.toUpperCase()}</span></div><button className="primary-action" onClick={() => setStage("active")} disabled={stage !== "standby"}><span>△</span> Activate disaster</button><button className="secondary-action" onClick={() => setStage("routed")} disabled={stage === "standby"}>Calculate safe routes <span>→</span></button><button className="alert-action" onClick={() => setStage("alerted")} disabled={stage !== "routed"}><span>◉</span> Send emergency alerts <span className="count">{affected.length}</span></button><button className="reset-action" onClick={loadDemo}>Reset simulation</button></div>
+            <div className="simulation-section"><div className="section-title"><span>SIMULATION</span><span className="stage-label">{stage === "standby" ? "READY" : stage.toUpperCase()}</span></div><button className="primary-action" onClick={() => setStage("active")} disabled={stage !== "standby"}><span>△</span> Activate disaster</button><button className="secondary-action" onClick={() => setStage("routed")} disabled={stage === "standby"}>Calculate safe routes <span>→</span></button><button className="alert-action" onClick={sendEmergencyAlerts} disabled={stage !== "routed" || alertStatus === "sending"}><span>◉</span> {alertStatus === "sending" ? "Sending SMS..." : "Send emergency alerts"} <span className="count">{affected.length}</span></button><label className="test-recipient">TEST SMS NUMBER<input value={testRecipient} onChange={(event) => setTestRecipient(event.target.value)} placeholder="+254712345678" inputMode="tel" /></label><button className="test-action" onClick={sendTestSms} disabled={!testRecipient || alertStatus === "sending"}>Send test SMS</button>{alertStatus === "error" && <p className="alert-error">SMS failed. Use E.164 format, for example +254712345678.</p>}{alertStatus === "sent" && <p className="alert-success">SMS accepted by Africa&apos;s Talking.</p>}<button className="reset-action" onClick={loadDemo}>Reset simulation</button></div>
           </>}
           {panel === "people" && <div className="list-panel">{demoPeople.map((person) => <button className="person-list" key={person.id} onClick={() => setSelected(person)}><i className={person.affected && stage !== "standby" ? "person-risk" : "person-safe"} /><span>{person.name}<small>{person.phone}</small></span><b>{person.affected && stage !== "standby" ? "AT RISK" : "SAFE"}</b></button>)}</div>}
           {panel === "shelters" && <div className="list-panel">{shelters.map((shelter) => <div className="shelter-list" key={shelter.id}><i>⌂</i><span>{shelter.name}<small>{shelter.capacity - shelter.occupancy} spaces available</small></span><b>OPEN</b></div>)}</div>}
