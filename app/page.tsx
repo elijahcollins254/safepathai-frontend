@@ -24,7 +24,7 @@ type GoogleOverlay = { setMap: (map: GoogleMapInstance | null) => void };
 type GooglePolygon = GoogleOverlay & { getPath: () => { getArray: () => Array<{ lat: () => number; lng: () => number }> } };
 type GoogleListener = { remove: () => void };
 
-const mapCenter: LatLng = { lat: 16.5062, lng: 80.6480 };
+const mapCenter: LatLng = { lat: 5, lng: 20 };
 const googleMapStyles = [
   { elementType: "geometry", stylers: [{ color: "#26343b" }] },
   { elementType: "labels.text.fill", stylers: [{ color: "#b9c8c9" }] },
@@ -52,7 +52,7 @@ function GoogleMapSurface({ onSelect, recenterPoint, ready, mode, people, zones,
     if (!mapInstance.current) {
       mapInstance.current = new mapsApi.maps.Map(mapElement.current, {
         center: mapCenter,
-        zoom: 13,
+        zoom: 4,
         streetViewControl: false,
         mapTypeControl: false,
         fullscreenControl: false,
