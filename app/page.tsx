@@ -3,15 +3,13 @@
 import Script from "next/script";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
-type Person = { id: number; name: string; phone: string; x: number; y: number; affected: boolean };
 type ApiPerson = { id: number; name: string; phone: string; details: string; latitude: number; longitude: number; status: "safe" | "at_risk" };
 type Zone = { id: number; name: string; zone_type: "safe" | "at_risk" | "hazard"; details: string; coordinates: LatLng[] };
-type Shelter = { id: number; name: string; x: number; y: number; capacity: number; occupancy: number };
 type Stage = "standby" | "active" | "routed" | "alerted";
 type AlertStatus = "idle" | "sending" | "sent" | "error";
 type LatLng = { lat: number; lng: number };
 type EditMode = "none" | "person" | "zone";
-type SearchResult = { id: string; label: string; detail: string; position: LatLng; person?: Person };
+type SearchResult = { id: string; label: string; detail: string; position: LatLng; person?: ApiPerson };
 
 type GoogleMapsApi = {
   maps: {
@@ -26,21 +24,6 @@ type GoogleOverlay = { setMap: (map: GoogleMapInstance | null) => void };
 type GooglePolygon = GoogleOverlay & { getPath: () => { getArray: () => Array<{ lat: () => number; lng: () => number }> } };
 type GoogleListener = { remove: () => void };
 
-const demoPeople: Person[] = Array.from({ length: 20 }, (_, index) => ({
-  id: index + 1,
-  name: `Person ${String(index + 1).padStart(2, "0")}`,
-  phone: "+254 7XX XXX " + String(110 + index),
-  x: 9 + ((index * 17) % 78),
-  y: 17 + ((index * 29) % 67),
-  affected: [1, 3, 4, 6, 8, 11, 14, 17].includes(index),
-}));
-
-const shelters: Shelter[] = [
-  { id: 1, name: "Green Primary School", x: 18, y: 74, capacity: 500, occupancy: 230 },
-  { id: 2, name: "Civic Community Hall", x: 76, y: 19, capacity: 300, occupancy: 184 },
-  { id: 3, name: "Central Stadium", x: 84, y: 77, capacity: 1200, occupancy: 612 },
-];
-
 const mapCenter: LatLng = { lat: 16.5062, lng: 80.6480 };
 const googleMapStyles = [
   { elementType: "geometry", stylers: [{ color: "#26343b" }] },
@@ -54,11 +37,7 @@ const googleMapStyles = [
   { featureType: "poi", stylers: [{ visibility: "simplified" }] },
 ];
 
-function toCoordinates(x: number, y: number): LatLng {
-  return { lat: mapCenter.lat + (50 - y) * 0.0022, lng: mapCenter.lng + (x - 50) * 0.0024 };
-}
-
-function GoogleMapSurface({ stage, onSelect, recenterPoint, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneDrawn }: { stage: Stage; onSelect: (person: Person) => void; recenterPoint: LatLng | null; ready: boolean; mode: EditMode; people: ApiPerson[]; zones: Zone[]; zonePoints: LatLng[]; finishZoneSignal: number; onPointSelect: (point: LatLng) => void; onZonePoint: (point: LatLng) => void; onZoneDrawn: (coordinates: LatLng[], polygon: GooglePolygon) => void }) {
+function GoogleMapSurface({ onSelect, recenterPoint, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneDrawn }: { onSelect: (person: ApiPerson) => void; recenterPoint: LatLng | null; ready: boolean; mode: EditMode; people: ApiPerson[]; zones: Zone[]; zonePoints: LatLng[]; finishZoneSignal: number; onPointSelect: (point: LatLng) => void; onZonePoint: (point: LatLng) => void; onZoneDrawn: (coordinates: LatLng[], polygon: GooglePolygon) => void }) {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<GoogleMapInstance | null>(null);
   const overlays = useRef<GoogleOverlay[]>([]);
@@ -109,29 +88,15 @@ function GoogleMapSurface({ stage, onSelect, recenterPoint, ready, mode, people,
       onZoneDrawn(zonePoints, polygon);
     }
 
-    shelters.forEach((shelter) => {
-      nextOverlays.push(new mapsApi.maps.Marker({
-        map: mapInstance.current,
-        position: toCoordinates(shelter.x, shelter.y),
-        title: shelter.name,
-        label: { text: "S", color: "#ffffff", fontWeight: "700" },
-        icon: { path: "M 0,0 m -13,0 a 13,13 0 1,0 26,0 a 13,13 0 1,0 -26,0", fillColor: "#2ca66f", fillOpacity: 1, strokeColor: "#d9ffea", strokeWeight: 2, scale: 1 },
-      }));
-    });
-
-    demoPeople.forEach((person) => {
+    people.forEach((person) => {
       const marker = new mapsApi.maps.Marker({
         map: mapInstance.current,
-        position: toCoordinates(person.x, person.y),
+        position: { lat: person.latitude, lng: person.longitude },
         title: person.name,
-        icon: { path: "M 0,0 m -6,0 a 6,6 0 1,0 12,0 a 6,6 0 1,0 -12,0", fillColor: person.affected && stage !== "standby" ? "#f05d5e" : "#72d6a3", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 1.5, scale: 1 },
+        icon: { path: "M 0,0 m -6,0 a 6,6 0 1,0 12,0 a 6,6 0 1,0 -12,0", fillColor: person.status === "at_risk" ? "#f05d5e" : "#72d6a3", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 1.5, scale: 1 },
       }) as GoogleOverlay & { addListener?: (event: string, callback: () => void) => void };
       marker.addListener?.("click", () => onSelect(person));
       nextOverlays.push(marker);
-    });
-
-    people.forEach((person) => {
-      nextOverlays.push(new mapsApi.maps.Marker({ map: mapInstance.current, position: { lat: person.latitude, lng: person.longitude }, title: person.name, icon: { path: "M 0,0 m -6,0 a 6,6 0 1,0 12,0 a 6,6 0 1,0 -12,0", fillColor: person.status === "at_risk" ? "#f05d5e" : "#72d6a3", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 1.5, scale: 1 } }));
     });
 
     zones.forEach((zone) => {
@@ -139,26 +104,9 @@ function GoogleMapSurface({ stage, onSelect, recenterPoint, ready, mode, people,
       nextOverlays.push(new mapsApi.maps.Polygon({ map: mapInstance.current, paths: zone.coordinates, fillColor: colors[zone.zone_type], fillOpacity: 0.24, strokeColor: colors[zone.zone_type], strokeWeight: 2 }));
     });
 
-    if (stage !== "standby") {
-      const hazardPath = [
-        toCoordinates(27, 32), toCoordinates(71, 28), toCoordinates(82, 50),
-        toCoordinates(68, 72), toCoordinates(35, 75), toCoordinates(22, 55),
-      ];
-      nextOverlays.push(new mapsApi.maps.Polygon({ map: mapInstance.current, paths: hazardPath, fillColor: "#d83d4b", fillOpacity: 0.27, strokeColor: "#f05d5e", strokeOpacity: 0.95, strokeWeight: 2 }));
-    }
-
-    if (stage === "routed" || stage === "alerted") {
-      affectedPeople.forEach((person, index) => {
-        const shelter = shelters[index % shelters.length];
-        const start = toCoordinates(person.x, person.y);
-        const finish = toCoordinates(shelter.x, shelter.y);
-        nextOverlays.push(new mapsApi.maps.Polyline({ map: mapInstance.current, path: [start, { lat: (start.lat + finish.lat) / 2 + 0.018, lng: (start.lng + finish.lng) / 2 }, finish], strokeColor: "#a6f0bf", strokeOpacity: 0.9, strokeWeight: 3, icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: 1, strokeColor: "#a6f0bf", scale: 3 }, offset: "0", repeat: "12px" }] }));
-      });
-    }
-
     overlays.current = nextOverlays;
     if (apiKey && mapInstance.current) mapInstance.current.setCenter(mapCenter);
-  }, [stage, onSelect, apiKey, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneDrawn]);
+  }, [onSelect, apiKey, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneDrawn]);
 
   useEffect(() => {
     if (recenterPoint && mapInstance.current) mapInstance.current.setCenter(recenterPoint);
@@ -167,11 +115,9 @@ function GoogleMapSurface({ stage, onSelect, recenterPoint, ready, mode, people,
   return apiKey ? <div className="google-map" ref={mapElement} /> : <div className="map-key-missing">Add <code>NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code> to load Google Maps.</div>;
 }
 
-const affectedPeople = demoPeople.filter((person) => person.affected);
-
 export default function Home() {
   const [stage, setStage] = useState<Stage>("standby");
-  const [selected, setSelected] = useState<Person | null>(null);
+  const [selected, setSelected] = useState<ApiPerson | null>(null);
   const [panel, setPanel] = useState("overview");
   const [mapsReady, setMapsReady] = useState(false);
   const [alertStatus, setAlertStatus] = useState<AlertStatus>("idle");
@@ -188,7 +134,7 @@ export default function Home() {
   const [zoneDraft, setZoneDraft] = useState<{ coordinates: LatLng[]; polygon: GooglePolygon } | null>(null);
   const [form, setForm] = useState({ name: "", phone: "", details: "", status: "safe" as "safe" | "at_risk", zoneType: "hazard" as Zone["zone_type"] });
   const [saveError, setSaveError] = useState("");
-  const affected = affectedPeople;
+  const affected = people.filter((person) => person.status === "at_risk");
   const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
   const normalizedApiBaseUrl = configuredApiBaseUrl.replace(/\/+$/, "");
   const apiBaseUrl = normalizedApiBaseUrl.endsWith("/api")
@@ -204,14 +150,8 @@ export default function Home() {
       if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) return [{ id: "coordinates", label: `${lat}, ${lng}`, detail: "Coordinates", position: { lat, lng } }];
     }
     const results: SearchResult[] = [];
-    demoPeople.forEach((person) => {
-      if (`${person.name} ${person.phone}`.toLowerCase().includes(query)) results.push({ id: `demo-${person.id}`, label: person.name, detail: person.phone, position: toCoordinates(person.x, person.y), person });
-    });
     people.forEach((person) => {
-      if (`${person.name} ${person.phone} ${person.details}`.toLowerCase().includes(query)) results.push({ id: `saved-${person.id}`, label: person.name, detail: person.phone || "Saved person", position: { lat: person.latitude, lng: person.longitude } });
-    });
-    shelters.forEach((shelter) => {
-      if (shelter.name.toLowerCase().includes(query)) results.push({ id: `shelter-${shelter.id}`, label: shelter.name, detail: "Safe zone", position: toCoordinates(shelter.x, shelter.y) });
+      if (`${person.name} ${person.phone} ${person.details}`.toLowerCase().includes(query)) results.push({ id: `saved-${person.id}`, label: person.name, detail: person.phone || "Saved person", position: { lat: person.latitude, lng: person.longitude }, person });
     });
     zones.forEach((zone) => {
       if (`${zone.name} ${zone.details}`.toLowerCase().includes(query) && zone.coordinates[0]) results.push({ id: `zone-${zone.id}`, label: zone.name, detail: `${zone.zone_type.replace("_", " ")} zone`, position: zone.coordinates[0] });
@@ -333,30 +273,30 @@ export default function Home() {
       <section className="workspace">
         <aside className="sidebar">
           <div className="sidebar-heading"><div><span className="eyebrow">COMMAND CENTER</span><h1>Mission control</h1></div><span className="live-dot" /></div>
-          <nav className="nav-tabs"><button className={panel === "overview" ? "selected" : ""} onClick={() => setPanel("overview")}>Overview</button><button className={panel === "people" ? "selected" : ""} onClick={() => setPanel("people")}>People <em>{demoPeople.length + people.length}</em></button><button className={panel === "shelters" ? "selected" : ""} onClick={() => setPanel("shelters")}>Safe zones <em>{shelters.length + zones.filter((zone) => zone.zone_type === "safe").length}</em></button></nav>
+          <nav className="nav-tabs"><button className={panel === "overview" ? "selected" : ""} onClick={() => setPanel("overview")}>Overview</button><button className={panel === "people" ? "selected" : ""} onClick={() => setPanel("people")}>People <em>{people.length}</em></button><button className={panel === "shelters" ? "selected" : ""} onClick={() => setPanel("shelters")}>Safe zones <em>{zones.filter((zone) => zone.zone_type === "safe").length}</em></button></nav>
 
           <div className="status-card"><div className="status-row"><span className={`status-icon ${stage === "standby" ? "quiet" : "danger"}`}>!</span><div><span className="eyebrow">CURRENT INCIDENT</span><strong>{stage === "standby" ? "No active incident" : "Critical flood"}</strong></div></div><div className="status-details"><span className={stage === "standby" ? "muted" : "danger-text"}>{stage === "standby" ? "Monitoring area" : "ACTIVE · FLOOD ZONE"}</span><span>Updated just now</span></div></div>
 
-          <div className="stats-grid"><div><strong>{stage === "standby" ? "—" : affected.length}</strong><span>Affected</span></div><div><strong>{stage === "standby" ? "—" : 12}</strong><span>Safe</span></div><div><strong>{stage === "routed" || stage === "alerted" ? affected.length : "—"}</strong><span>Routes</span></div></div>
+          <div className="stats-grid"><div><strong>{stage === "standby" ? "—" : affected.length}</strong><span>Affected</span></div><div><strong>{stage === "standby" ? "—" : people.filter((person) => person.status === "safe").length}</strong><span>Safe</span></div><div><strong>{stage === "routed" || stage === "alerted" ? affected.length : "—"}</strong><span>Routes</span></div></div>
 
           {panel === "overview" && <>
             <div className="control-section"><div className="section-title"><span>DISASTER CONTROLS</span><button className="more">•••</button></div><label className="field-label">DISASTER TYPE<select defaultValue="Flood"><option>Flood</option><option>Wildfire</option><option>Landslide</option></select></label><label className="field-label">SEVERITY<div className="severity-options"><button className="low">Low</button><button className="medium">Med</button><button className="high">High</button><button className="critical active">Critical</button></div></label></div>
             <div className="simulation-section"><div className="section-title"><span>SIMULATION</span><span className="stage-label">{stage === "standby" ? "READY" : stage.toUpperCase()}</span></div><button className="primary-action" onClick={() => setStage("active")} disabled={stage !== "standby"}><span>△</span> Activate disaster</button><button className="secondary-action" onClick={() => setStage("routed")} disabled={stage === "standby"}>Calculate safe routes <span>→</span></button><button className="alert-action" onClick={sendEmergencyAlerts} disabled={stage !== "routed" || alertStatus === "sending"}><span>◉</span> {alertStatus === "sending" ? "Sending SMS..." : "Send emergency alerts"} <span className="count">{affected.length}</span></button><label className="test-recipient">TEST SMS NUMBER<input value={testRecipient} onChange={(event) => setTestRecipient(event.target.value)} placeholder="+254712345678" inputMode="tel" /></label><button className="test-action" onClick={sendTestSms} disabled={!testRecipient || alertStatus === "sending"}>Send test SMS</button>{alertStatus === "error" && <p className="alert-error">SMS failed. Use E.164 format, for example +254712345678.</p>}{alertStatus === "sent" && <p className="alert-success">SMS accepted by Africa&apos;s Talking.</p>}<button className="reset-action" onClick={loadDemo}>Reset simulation</button></div>
           </>}
-          {panel === "people" && <div className="list-panel">{demoPeople.map((person) => <button className="person-list" key={`demo-${person.id}`} onClick={() => setSelected(person)}><i className={person.affected && stage !== "standby" ? "person-risk" : "person-safe"} /><span>{person.name}<small>{person.phone}</small></span><b>{person.affected && stage !== "standby" ? "AT RISK" : "SAFE"}</b></button>)}{people.map((person) => <div className="person-list" key={`saved-${person.id}`}><i className={person.status === "at_risk" ? "person-risk" : "person-safe"} /><span>{person.name}<small>{person.phone || "No phone number"}</small></span><b>{person.status === "at_risk" ? "AT RISK" : "SAFE"}</b></div>)}</div>}
-          {panel === "shelters" && <div className="list-panel">{shelters.map((shelter) => <div className="shelter-list" key={shelter.id}><i>⌂</i><span>{shelter.name}<small>{shelter.capacity - shelter.occupancy} spaces available</small></span><b>OPEN</b></div>)}</div>}
+          {panel === "people" && <div className="list-panel">{people.map((person) => <button className="person-list" key={`saved-${person.id}`} onClick={() => setSelected(person)}><i className={person.status === "at_risk" ? "person-risk" : "person-safe"} /><span>{person.name}<small>{person.phone || "No phone number"}</small></span><b>{person.status === "at_risk" ? "AT RISK" : "SAFE"}</b></button>)}</div>}
+          {panel === "shelters" && <div className="list-panel">{zones.filter((zone) => zone.zone_type === "safe").map((zone) => <div className="shelter-list" key={zone.id}><i>⌂</i><span>{zone.name}<small>{zone.details || "Database safe zone"}</small></span><b>SAFE</b></div>)}</div>}
           <div className="disclaimer">Recommended based on available hazard and map data.<br /><span>Prototype simulation · Not a guarantee of physical safety</span></div>
         </aside>
 
         <div className="map-panel">
           <div className="map-toolbar"><form className="search-form" onSubmit={submitSearch}><span className="search-icon">⌕</span><input className="search-input" aria-label="Search people, places, or coordinates" placeholder="Search people, places, or coordinates" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} />{searchOpen && searchQuery.trim() && <div className="search-results">{searchResults.length ? searchResults.map((result) => <button type="button" className="search-result" key={result.id} onClick={() => selectSearchResult(result)}><strong>{result.label}</strong><small>{result.detail}</small></button>) : <span className="search-empty">No matching map data</span>}</div>}</form><button className="map-button">Layers</button><button className="map-button">◎</button></div>
-          <div className="map-canvas"><GoogleMapSurface stage={stage} onSelect={setSelected} recenterPoint={searchCenter} ready={mapsReady} mode={mode} people={people} zones={zones} zonePoints={zonePoints} finishZoneSignal={finishZoneSignal} onPointSelect={setPersonPoint} onZonePoint={(point) => setZonePoints((current) => [...current, point])} onZoneDrawn={(coordinates, polygon) => { setZoneDraft({ coordinates, polygon }); setMode("none"); }} />
+          <div className="map-canvas"><GoogleMapSurface onSelect={setSelected} recenterPoint={searchCenter} ready={mapsReady} mode={mode} people={people} zones={zones} zonePoints={zonePoints} finishZoneSignal={finishZoneSignal} onPointSelect={setPersonPoint} onZonePoint={(point) => setZonePoints((current) => [...current, point])} onZoneDrawn={(coordinates, polygon) => { setZoneDraft({ coordinates, polygon }); setMode("none"); }} />
             <div className="map-edit-toolbar"><button className={mode === "person" ? "active" : ""} onClick={startPerson}>+ Add person</button><button className={mode === "zone" ? "active" : ""} onClick={startZone}>Draw zone</button>{mode === "zone" && <button className="finish-zone" onClick={() => setFinishZoneSignal((current) => current + 1)} disabled={zonePoints.length < 3}>Finish zone ({zonePoints.length}/3)</button>}</div>
             {personPoint && <form className="map-form" onSubmit={saveMapItem}><span className="eyebrow">NEW PERSON</span><input required placeholder="Full name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input placeholder="Phone number" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} /><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as "safe" | "at_risk" })}><option value="safe">Safe</option><option value="at_risk">At risk</option></select><textarea placeholder="Details" value={form.details} onChange={(event) => setForm({ ...form, details: event.target.value })} /><button type="submit">Save person</button><button type="button" onClick={() => { setPersonPoint(null); setMode("none"); }}>Cancel</button></form>}
             {zoneDraft && <form className="map-form" onSubmit={saveMapItem}><span className="eyebrow">NEW ZONE</span><input required placeholder="Zone name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><select value={form.zoneType} onChange={(event) => setForm({ ...form, zoneType: event.target.value as Zone["zone_type"] })}><option value="safe">Safe zone</option><option value="at_risk">At risk zone</option><option value="hazard">Hazard zone</option></select><textarea placeholder="Details" value={form.details} onChange={(event) => setForm({ ...form, details: event.target.value })} /><button type="submit">Save zone</button><button type="button" onClick={() => { zoneDraft.polygon.setMap(null); setZoneDraft(null); setZonePoints([]); }}>Cancel</button></form>}
             {saveError && <p className="save-error">{saveError}</p>}
             <div className="map-key"><span><i className="key-safe" /> Safe</span><span><i className="key-risk" /> At risk</span><span><i className="key-zone" /> Hazard zone</span></div><div className="zoom-controls"><button>+</button><button>−</button></div><div className="map-attribution">Map data © SafePath simulation</div>
-            {selected && <div className="person-card"><button className="close-card" onClick={() => setSelected(null)}>×</button><span className="eyebrow">PERSON PROFILE</span><h2>{selected.name}</h2><p>{selected.phone}</p><div className="card-status"><i className={selected.affected && stage !== "standby" ? "key-risk" : "key-safe"} /> {selected.affected && stage !== "standby" ? "AT RISK" : "SAFE"}</div>{selected.affected && stage !== "standby" && <div className="evacuation"><span>RECOMMENDED DESTINATION</span><strong>Green Primary School</strong><small>1.9 km · 8 min estimated</small></div>}</div>}
+            {selected && <div className="person-card"><button className="close-card" onClick={() => setSelected(null)}>×</button><span className="eyebrow">PERSON PROFILE</span><h2>{selected.name}</h2><p>{selected.phone || "No phone number"}</p><div className="card-status"><i className={selected.status === "at_risk" ? "key-risk" : "key-safe"} /> {selected.status === "at_risk" ? "AT RISK" : "SAFE"}</div>{selected.details && <div className="evacuation"><span>DETAILS</span><strong>{selected.details}</strong></div>}</div>}
           </div>
           <div className="map-footer"><div><span className="eyebrow">OPERATION</span><strong>Detect <b>→</b> Identify <b>→</b> Route <b>→</b> Communicate</strong></div>{stage === "alerted" && <div className="alert-banner"><span>✓</span><strong>{affected.length} evacuation alerts sent</strong><small>Africa&apos;s Talking · Demo queue</small></div>}{stage === "active" && <div className="alert-banner warning"><span>!</span><strong>{affected.length} people need evacuation</strong><small>Calculate safe routes to continue</small></div>}</div>
         </div>
