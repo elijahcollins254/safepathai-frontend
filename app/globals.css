@@ -1,3 +1,11 @@
+.search-form { background: rgba(246, 248, 243, .94); border-radius: 6px; box-shadow: 0 5px 18px rgba(11, 30, 31, .12); display: flex; flex: 1; position: relative; }
+.search-icon { color: #5d6e70; font-size: 17px; padding: 9px 0 9px 15px; }
+.search-input { background: transparent; border: 0; color: #40585a; flex: 1; font-size: 12px; min-width: 0; outline: 0; padding: 12px 15px 12px 9px; }
+.search-input::placeholder { color: #8e9a9a; }
+.search-results { background: #f6f8f3; border-radius: 0 0 6px 6px; box-shadow: 0 8px 18px rgba(11, 30, 31, .14); left: 0; overflow: hidden; position: absolute; right: 0; top: 100%; }
+.search-result { background: transparent; border: 0; border-top: 1px solid #dce5df; color: #40585a; cursor: pointer; display: block; padding: 9px 15px; text-align: left; width: 100%; }
+.search-result:hover { background: #e8f1eb; }
+.search-result strong, .search-result small { display: block; }.search-result strong { font-size: 11px; }.search-result small, .search-empty { color: #7a8d8d; font-size: 10px; }.search-empty { display: block; padding: 11px 15px; }
 @import "tailwindcss";
 
 :root {

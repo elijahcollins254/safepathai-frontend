@@ -11,6 +11,7 @@ type Stage = "standby" | "active" | "routed" | "alerted";
 type AlertStatus = "idle" | "sending" | "sent" | "error";
 type LatLng = { lat: number; lng: number };
 type EditMode = "none" | "person" | "zone";
+type SearchResult = { id: string; label: string; detail: string; position: LatLng; person?: Person };
 
 type GoogleMapsApi = {
   maps: {
@@ -57,7 +58,7 @@ function toCoordinates(x: number, y: number): LatLng {
   return { lat: mapCenter.lat + (50 - y) * 0.0022, lng: mapCenter.lng + (x - 50) * 0.0024 };
 }
 
-function GoogleMapSurface({ stage, onSelect, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneDrawn }: { stage: Stage; onSelect: (person: Person) => void; ready: boolean; mode: EditMode; people: ApiPerson[]; zones: Zone[]; zonePoints: LatLng[]; finishZoneSignal: number; onPointSelect: (point: LatLng) => void; onZonePoint: (point: LatLng) => void; onZoneDrawn: (coordinates: LatLng[], polygon: GooglePolygon) => void }) {
+function GoogleMapSurface({ stage, onSelect, recenterPoint, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneDrawn }: { stage: Stage; onSelect: (person: Person) => void; recenterPoint: LatLng | null; ready: boolean; mode: EditMode; people: ApiPerson[]; zones: Zone[]; zonePoints: LatLng[]; finishZoneSignal: number; onPointSelect: (point: LatLng) => void; onZonePoint: (point: LatLng) => void; onZoneDrawn: (coordinates: LatLng[], polygon: GooglePolygon) => void }) {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<GoogleMapInstance | null>(null);
   const overlays = useRef<GoogleOverlay[]>([]);
@@ -159,6 +160,10 @@ function GoogleMapSurface({ stage, onSelect, ready, mode, people, zones, zonePoi
     if (apiKey && mapInstance.current) mapInstance.current.setCenter(mapCenter);
   }, [stage, onSelect, apiKey, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneDrawn]);
 
+  useEffect(() => {
+    if (recenterPoint && mapInstance.current) mapInstance.current.setCenter(recenterPoint);
+  }, [recenterPoint]);
+
   return apiKey ? <div className="google-map" ref={mapElement} /> : <div className="map-key-missing">Add <code>NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code> to load Google Maps.</div>;
 }
 
@@ -177,6 +182,9 @@ export default function Home() {
   const [personPoint, setPersonPoint] = useState<LatLng | null>(null);
   const [zonePoints, setZonePoints] = useState<LatLng[]>([]);
   const [finishZoneSignal, setFinishZoneSignal] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchCenter, setSearchCenter] = useState<LatLng | null>(null);
   const [zoneDraft, setZoneDraft] = useState<{ coordinates: LatLng[]; polygon: GooglePolygon } | null>(null);
   const [form, setForm] = useState({ name: "", phone: "", details: "", status: "safe" as "safe" | "at_risk", zoneType: "hazard" as Zone["zone_type"] });
   const [saveError, setSaveError] = useState("");
@@ -186,6 +194,43 @@ export default function Home() {
   const apiBaseUrl = normalizedApiBaseUrl.endsWith("/api")
     ? normalizedApiBaseUrl
     : `${normalizedApiBaseUrl}/api`;
+
+  const searchResults: SearchResult[] = (() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return [];
+    const coordinateParts = query.split(",").map(Number);
+    if (coordinateParts.length === 2 && coordinateParts.every(Number.isFinite)) {
+      const [lat, lng] = coordinateParts;
+      if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) return [{ id: "coordinates", label: `${lat}, ${lng}`, detail: "Coordinates", position: { lat, lng } }];
+    }
+    const results: SearchResult[] = [];
+    demoPeople.forEach((person) => {
+      if (`${person.name} ${person.phone}`.toLowerCase().includes(query)) results.push({ id: `demo-${person.id}`, label: person.name, detail: person.phone, position: toCoordinates(person.x, person.y), person });
+    });
+    people.forEach((person) => {
+      if (`${person.name} ${person.phone} ${person.details}`.toLowerCase().includes(query)) results.push({ id: `saved-${person.id}`, label: person.name, detail: person.phone || "Saved person", position: { lat: person.latitude, lng: person.longitude } });
+    });
+    shelters.forEach((shelter) => {
+      if (shelter.name.toLowerCase().includes(query)) results.push({ id: `shelter-${shelter.id}`, label: shelter.name, detail: "Safe zone", position: toCoordinates(shelter.x, shelter.y) });
+    });
+    zones.forEach((zone) => {
+      if (`${zone.name} ${zone.details}`.toLowerCase().includes(query) && zone.coordinates[0]) results.push({ id: `zone-${zone.id}`, label: zone.name, detail: `${zone.zone_type.replace("_", " ")} zone`, position: zone.coordinates[0] });
+    });
+    return results.slice(0, 6);
+  })();
+
+  function selectSearchResult(result: SearchResult) {
+    if (result.person) setSelected(result.person);
+    setSearchQuery(result.label);
+    setSearchOpen(false);
+    setMode("none");
+    setSearchCenter(result.position);
+  }
+
+  function submitSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (searchResults[0]) selectSearchResult(searchResults[0]);
+  }
 
   useEffect(() => {
     async function loadMapData() {
@@ -304,8 +349,8 @@ export default function Home() {
         </aside>
 
         <div className="map-panel">
-          <div className="map-toolbar"><button className="search-button">⌕ <span>Search people, places, or coordinates</span></button><button className="map-button">Layers</button><button className="map-button">◎</button></div>
-          <div className="map-canvas"><GoogleMapSurface stage={stage} onSelect={setSelected} ready={mapsReady} mode={mode} people={people} zones={zones} zonePoints={zonePoints} finishZoneSignal={finishZoneSignal} onPointSelect={setPersonPoint} onZonePoint={(point) => setZonePoints((current) => [...current, point])} onZoneDrawn={(coordinates, polygon) => { setZoneDraft({ coordinates, polygon }); setMode("none"); }} />
+          <div className="map-toolbar"><form className="search-form" onSubmit={submitSearch}><span className="search-icon">⌕</span><input className="search-input" aria-label="Search people, places, or coordinates" placeholder="Search people, places, or coordinates" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} />{searchOpen && searchQuery.trim() && <div className="search-results">{searchResults.length ? searchResults.map((result) => <button type="button" className="search-result" key={result.id} onClick={() => selectSearchResult(result)}><strong>{result.label}</strong><small>{result.detail}</small></button>) : <span className="search-empty">No matching map data</span>}</div>}</form><button className="map-button">Layers</button><button className="map-button">◎</button></div>
+          <div className="map-canvas"><GoogleMapSurface stage={stage} onSelect={setSelected} recenterPoint={searchCenter} ready={mapsReady} mode={mode} people={people} zones={zones} zonePoints={zonePoints} finishZoneSignal={finishZoneSignal} onPointSelect={setPersonPoint} onZonePoint={(point) => setZonePoints((current) => [...current, point])} onZoneDrawn={(coordinates, polygon) => { setZoneDraft({ coordinates, polygon }); setMode("none"); }} />
             <div className="map-edit-toolbar"><button className={mode === "person" ? "active" : ""} onClick={startPerson}>+ Add person</button><button className={mode === "zone" ? "active" : ""} onClick={startZone}>Draw zone</button>{mode === "zone" && <button className="finish-zone" onClick={() => setFinishZoneSignal((current) => current + 1)} disabled={zonePoints.length < 3}>Finish zone ({zonePoints.length}/3)</button>}</div>
             {personPoint && <form className="map-form" onSubmit={saveMapItem}><span className="eyebrow">NEW PERSON</span><input required placeholder="Full name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input placeholder="Phone number" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} /><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as "safe" | "at_risk" })}><option value="safe">Safe</option><option value="at_risk">At risk</option></select><textarea placeholder="Details" value={form.details} onChange={(event) => setForm({ ...form, details: event.target.value })} /><button type="submit">Save person</button><button type="button" onClick={() => { setPersonPoint(null); setMode("none"); }}>Cancel</button></form>}
             {zoneDraft && <form className="map-form" onSubmit={saveMapItem}><span className="eyebrow">NEW ZONE</span><input required placeholder="Zone name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><select value={form.zoneType} onChange={(event) => setForm({ ...form, zoneType: event.target.value as Zone["zone_type"] })}><option value="safe">Safe zone</option><option value="at_risk">At risk zone</option><option value="hazard">Hazard zone</option></select><textarea placeholder="Details" value={form.details} onChange={(event) => setForm({ ...form, details: event.target.value })} /><button type="submit">Save zone</button><button type="button" onClick={() => { zoneDraft.polygon.setMap(null); setZoneDraft(null); setZonePoints([]); }}>Cancel</button></form>}
