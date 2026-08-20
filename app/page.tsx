@@ -52,7 +52,7 @@ function GoogleMapSurface({ onSelect, recenterPoint, ready, mode, people, zones,
     if (!mapInstance.current) {
       mapInstance.current = new mapsApi.maps.Map(mapElement.current, {
         center: mapCenter,
-        zoom: 4,
+        zoom: 3,
         streetViewControl: false,
         mapTypeControl: false,
         fullscreenControl: false,
