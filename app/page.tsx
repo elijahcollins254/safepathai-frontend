@@ -18,13 +18,12 @@ type GoogleMapsApi = {
     Marker: new (options: Record<string, unknown>) => GoogleOverlay;
     Polygon: new (options: Record<string, unknown>) => GoogleOverlay;
     Polyline: new (options: Record<string, unknown>) => GoogleOverlay;
-    drawing: { DrawingManager: new (options: Record<string, unknown>) => GoogleDrawingManager; OverlayType: { POLYGON: string } };
   };
 };
-type GoogleMapInstance = { setCenter: (center: LatLng) => void; addListener?: (event: string, callback: (event: { latLng?: { lat: () => number; lng: () => number } }) => void) => GoogleOverlay };
+type GoogleMapInstance = { setCenter: (center: LatLng) => void; addListener?: (event: string, callback: (event: { latLng?: { lat: () => number; lng: () => number } }) => void) => GoogleListener };
 type GoogleOverlay = { setMap: (map: GoogleMapInstance | null) => void };
 type GooglePolygon = GoogleOverlay & { getPath: () => { getArray: () => Array<{ lat: () => number; lng: () => number }> } };
-type GoogleDrawingManager = GoogleOverlay & { addListener: (event: string, callback: (event: { overlay: GooglePolygon }) => void) => void };
+type GoogleListener = { remove: () => void };
 
 const demoPeople: Person[] = Array.from({ length: 20 }, (_, index) => ({
   id: index + 1,
@@ -58,10 +57,12 @@ function toCoordinates(x: number, y: number): LatLng {
   return { lat: mapCenter.lat + (50 - y) * 0.0022, lng: mapCenter.lng + (x - 50) * 0.0024 };
 }
 
-function GoogleMapSurface({ stage, onSelect, ready, mode, people, zones, onPointSelect, onZoneDrawn }: { stage: Stage; onSelect: (person: Person) => void; ready: boolean; mode: EditMode; people: ApiPerson[]; zones: Zone[]; onPointSelect: (point: LatLng) => void; onZoneDrawn: (coordinates: LatLng[], polygon: GooglePolygon) => void }) {
+function GoogleMapSurface({ stage, onSelect, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneDrawn }: { stage: Stage; onSelect: (person: Person) => void; ready: boolean; mode: EditMode; people: ApiPerson[]; zones: Zone[]; zonePoints: LatLng[]; finishZoneSignal: number; onPointSelect: (point: LatLng) => void; onZonePoint: (point: LatLng) => void; onZoneDrawn: (coordinates: LatLng[], polygon: GooglePolygon) => void }) {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<GoogleMapInstance | null>(null);
   const overlays = useRef<GoogleOverlay[]>([]);
+  const mapListeners = useRef<GoogleListener[]>([]);
+  const lastFinishSignal = useRef(0);
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
 
   useEffect(() => {
@@ -80,25 +81,31 @@ function GoogleMapSurface({ stage, onSelect, ready, mode, people, zones, onPoint
     }
 
     overlays.current.forEach((overlay) => overlay.setMap(null));
+    mapListeners.current.forEach((listener) => listener.remove());
+    mapListeners.current = [];
     const nextOverlays: GoogleOverlay[] = [];
 
     if (mode === "person") {
-      mapInstance.current.addListener?.("click", (event) => {
+      const listener = mapInstance.current.addListener?.("click", (event) => {
         if (event.latLng) onPointSelect({ lat: event.latLng.lat(), lng: event.latLng.lng() });
       });
+      if (listener) mapListeners.current.push(listener);
     }
 
-    if (mode === "zone" && mapsApi.maps.drawing) {
-      const drawingManager = new mapsApi.maps.drawing.DrawingManager({
-        drawingMode: mapsApi.maps.drawing.OverlayType.POLYGON,
-        drawingControl: false,
-        polygonOptions: { fillColor: "#f05d5e", fillOpacity: 0.25, strokeColor: "#f05d5e", strokeWeight: 2 },
-        map: mapInstance.current,
+    if (mode === "zone") {
+      const listener = mapInstance.current.addListener?.("click", (event) => {
+        if (event.latLng) onZonePoint({ lat: event.latLng.lat(), lng: event.latLng.lng() });
       });
-      drawingManager.addListener("overlaycomplete", ({ overlay }) => {
-        onZoneDrawn(overlay.getPath().getArray().map((point) => ({ lat: point.lat(), lng: point.lng() })), overlay);
-      });
-      nextOverlays.push(drawingManager);
+      if (listener) mapListeners.current.push(listener);
+      if (zonePoints.length > 1) {
+        nextOverlays.push(new mapsApi.maps.Polyline({ map: mapInstance.current, path: zonePoints, strokeColor: "#f05d5e", strokeWeight: 2, strokeOpacity: 0.9 }));
+      }
+    }
+
+    if (mode === "zone" && finishZoneSignal > lastFinishSignal.current && zonePoints.length >= 3) {
+      lastFinishSignal.current = finishZoneSignal;
+      const polygon = new mapsApi.maps.Polygon({ map: mapInstance.current, paths: zonePoints, fillColor: "#f05d5e", fillOpacity: 0.25, strokeColor: "#f05d5e", strokeWeight: 2 }) as GooglePolygon;
+      onZoneDrawn(zonePoints, polygon);
     }
 
     shelters.forEach((shelter) => {
@@ -150,7 +157,7 @@ function GoogleMapSurface({ stage, onSelect, ready, mode, people, zones, onPoint
 
     overlays.current = nextOverlays;
     if (apiKey && mapInstance.current) mapInstance.current.setCenter(mapCenter);
-  }, [stage, onSelect, apiKey, ready, mode, people, zones, onPointSelect, onZoneDrawn]);
+  }, [stage, onSelect, apiKey, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneDrawn]);
 
   return apiKey ? <div className="google-map" ref={mapElement} /> : <div className="map-key-missing">Add <code>NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code> to load Google Maps.</div>;
 }
@@ -168,6 +175,8 @@ export default function Home() {
   const [people, setPeople] = useState<ApiPerson[]>([]);
   const [zones, setZones] = useState<Zone[]>([]);
   const [personPoint, setPersonPoint] = useState<LatLng | null>(null);
+  const [zonePoints, setZonePoints] = useState<LatLng[]>([]);
+  const [finishZoneSignal, setFinishZoneSignal] = useState(0);
   const [zoneDraft, setZoneDraft] = useState<{ coordinates: LatLng[]; polygon: GooglePolygon } | null>(null);
   const [form, setForm] = useState({ name: "", phone: "", details: "", status: "safe" as "safe" | "at_risk", zoneType: "hazard" as Zone["zone_type"] });
   const [saveError, setSaveError] = useState("");
@@ -194,6 +203,7 @@ export default function Home() {
   function startPerson() {
     setSaveError("");
     setPersonPoint(null);
+    setZonePoints([]);
     setZoneDraft(null);
     setMode("person");
   }
@@ -201,6 +211,7 @@ export default function Home() {
   function startZone() {
     setSaveError("");
     setPersonPoint(null);
+    setZonePoints([]);
     setZoneDraft(null);
     setMode("zone");
   }
@@ -221,6 +232,7 @@ export default function Home() {
       setForm({ name: "", phone: "", details: "", status: "safe", zoneType: "hazard" });
       setPersonPoint(null);
       setZoneDraft(null);
+      setZonePoints([]);
       setMode("none");
     } catch {
       setSaveError("The item could not be saved. Check that the API is running.");
@@ -267,7 +279,7 @@ export default function Home() {
 
   return (
     <main className="command-shell">
-      {(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY) && <Script src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY}&libraries=drawing`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
+      {(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY) && <Script src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY}`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
       <header className="topbar">
         <div className="brand"><span className="brand-mark">+</span><span>SafePath <b>AI</b></span><small>EMERGENCY OPERATIONS</small></div>
         <div className="top-actions"><span className="demo-pill"><i /> DEMO MODE</span><span className="sync"><i /> SYSTEMS ONLINE</span><button className="icon-button" aria-label="Settings">⚙</button><div className="operator">OP <span>AO</span></div></div>
@@ -293,10 +305,10 @@ export default function Home() {
 
         <div className="map-panel">
           <div className="map-toolbar"><button className="search-button">⌕ <span>Search people, places, or coordinates</span></button><button className="map-button">Layers</button><button className="map-button">◎</button></div>
-          <div className="map-canvas"><GoogleMapSurface stage={stage} onSelect={setSelected} ready={mapsReady} mode={mode} people={people} zones={zones} onPointSelect={setPersonPoint} onZoneDrawn={(coordinates, polygon) => { polygon.setMap(null); setZoneDraft({ coordinates, polygon }); setMode("none"); }} />
-            <div className="map-edit-toolbar"><button className={mode === "person" ? "active" : ""} onClick={startPerson}>+ Add person</button><button className={mode === "zone" ? "active" : ""} onClick={startZone}>Draw zone</button></div>
+          <div className="map-canvas"><GoogleMapSurface stage={stage} onSelect={setSelected} ready={mapsReady} mode={mode} people={people} zones={zones} zonePoints={zonePoints} finishZoneSignal={finishZoneSignal} onPointSelect={setPersonPoint} onZonePoint={(point) => setZonePoints((current) => [...current, point])} onZoneDrawn={(coordinates, polygon) => { setZoneDraft({ coordinates, polygon }); setMode("none"); }} />
+            <div className="map-edit-toolbar"><button className={mode === "person" ? "active" : ""} onClick={startPerson}>+ Add person</button><button className={mode === "zone" ? "active" : ""} onClick={startZone}>Draw zone</button>{mode === "zone" && <button className="finish-zone" onClick={() => setFinishZoneSignal((current) => current + 1)} disabled={zonePoints.length < 3}>Finish zone ({zonePoints.length}/3)</button>}</div>
             {personPoint && <form className="map-form" onSubmit={saveMapItem}><span className="eyebrow">NEW PERSON</span><input required placeholder="Full name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input placeholder="Phone number" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} /><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as "safe" | "at_risk" })}><option value="safe">Safe</option><option value="at_risk">At risk</option></select><textarea placeholder="Details" value={form.details} onChange={(event) => setForm({ ...form, details: event.target.value })} /><button type="submit">Save person</button><button type="button" onClick={() => { setPersonPoint(null); setMode("none"); }}>Cancel</button></form>}
-            {zoneDraft && <form className="map-form" onSubmit={saveMapItem}><span className="eyebrow">NEW ZONE</span><input required placeholder="Zone name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><select value={form.zoneType} onChange={(event) => setForm({ ...form, zoneType: event.target.value as Zone["zone_type"] })}><option value="safe">Safe zone</option><option value="at_risk">At risk zone</option><option value="hazard">Hazard zone</option></select><textarea placeholder="Details" value={form.details} onChange={(event) => setForm({ ...form, details: event.target.value })} /><button type="submit">Save zone</button><button type="button" onClick={() => { zoneDraft.polygon.setMap(null); setZoneDraft(null); }}>Cancel</button></form>}
+            {zoneDraft && <form className="map-form" onSubmit={saveMapItem}><span className="eyebrow">NEW ZONE</span><input required placeholder="Zone name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><select value={form.zoneType} onChange={(event) => setForm({ ...form, zoneType: event.target.value as Zone["zone_type"] })}><option value="safe">Safe zone</option><option value="at_risk">At risk zone</option><option value="hazard">Hazard zone</option></select><textarea placeholder="Details" value={form.details} onChange={(event) => setForm({ ...form, details: event.target.value })} /><button type="submit">Save zone</button><button type="button" onClick={() => { zoneDraft.polygon.setMap(null); setZoneDraft(null); setZonePoints([]); }}>Cancel</button></form>}
             {saveError && <p className="save-error">{saveError}</p>}
             <div className="map-key"><span><i className="key-safe" /> Safe</span><span><i className="key-risk" /> At risk</span><span><i className="key-zone" /> Hazard zone</span></div><div className="zoom-controls"><button>+</button><button>−</button></div><div className="map-attribution">Map data © SafePath simulation</div>
             {selected && <div className="person-card"><button className="close-card" onClick={() => setSelected(null)}>×</button><span className="eyebrow">PERSON PROFILE</span><h2>{selected.name}</h2><p>{selected.phone}</p><div className="card-status"><i className={selected.affected && stage !== "standby" ? "key-risk" : "key-safe"} /> {selected.affected && stage !== "standby" ? "AT RISK" : "SAFE"}</div>{selected.affected && stage !== "standby" && <div className="evacuation"><span>RECOMMENDED DESTINATION</span><strong>Green Primary School</strong><small>1.9 km · 8 min estimated</small></div>}</div>}
