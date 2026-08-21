@@ -17,12 +17,20 @@ type GoogleMapsApi = {
     Marker: new (options: Record<string, unknown>) => GoogleOverlay;
     Polygon: new (options: Record<string, unknown>) => GoogleOverlay;
     Polyline: new (options: Record<string, unknown>) => GoogleOverlay;
+    places?: {
+      AutocompleteService: new () => GoogleAutocompleteService;
+      PlacesService: new (element: HTMLElement) => GooglePlacesService;
+      PlacesServiceStatus: { OK: string };
+    };
   };
 };
 type GoogleMapInstance = { setCenter: (center: LatLng) => void; addListener?: (event: string, callback: (event: { latLng?: { lat: () => number; lng: () => number } }) => void) => GoogleListener };
 type GoogleOverlay = { setMap: (map: GoogleMapInstance | null) => void };
 type GooglePolygon = GoogleOverlay & { getPath: () => { getArray: () => Array<{ lat: () => number; lng: () => number }> } };
 type GoogleListener = { remove: () => void };
+type GoogleAutocompletePrediction = { place_id: string; description: string; structured_formatting?: { main_text: string; secondary_text: string } };
+type GoogleAutocompleteService = { getPlacePredictions: (request: { input: string }, callback: (predictions: GoogleAutocompletePrediction[] | null, status: string) => void) => void };
+type GooglePlacesService = { getDetails: (request: { placeId: string; fields: string[] }, callback: (place: { geometry?: { location?: { lat: () => number; lng: () => number } } } | null, status: string) => void) => void };
 
 const mapCenter: LatLng = { lat: 5, lng: 20 };
 const googleMapStyles = [
@@ -164,6 +172,7 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchCenter, setSearchCenter] = useState<LatLng | null>(null);
+  const [placeResults, setPlaceResults] = useState<GoogleAutocompletePrediction[]>([]);
   const [zoneDraft, setZoneDraft] = useState<{ coordinates: LatLng[]; polygon: GooglePolygon } | null>(null);
   const [form, setForm] = useState({ name: "", phone: "", details: "", status: "safe" as "safe" | "at_risk", zoneType: "hazard" as Zone["zone_type"] });
   const [saveError, setSaveError] = useState("");
@@ -193,10 +202,25 @@ export default function Home() {
     zones.forEach((zone) => {
       if (`${zone.name} ${zone.details}`.toLowerCase().includes(query) && zone.coordinates[0]) results.push({ id: `zone-${zone.id}`, label: zone.name, detail: `${zone.zone_type.replace("_", " ")} zone`, position: zone.coordinates[0] });
     });
-    return results.slice(0, 6);
+    const placeSearchResults = placeResults.slice(0, 5).map((place) => ({
+      id: `place-${place.place_id}`,
+      label: place.structured_formatting?.main_text || place.description,
+      detail: place.structured_formatting?.secondary_text || "Google place",
+      position: mapCenter,
+    }));
+    return [...results, ...placeSearchResults].slice(0, 6);
   })();
 
   function selectSearchResult(result: SearchResult) {
+    const placeId = result.id.startsWith("place-") ? result.id.slice(6) : null;
+    const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
+    if (placeId && mapsApi?.maps.places) {
+      const service = new mapsApi.maps.places.PlacesService(document.createElement("div"));
+      service.getDetails({ placeId, fields: ["geometry"] }, (place, status) => {
+        const location = status === mapsApi.maps.places?.PlacesServiceStatus.OK ? place?.geometry?.location : undefined;
+        if (location) setSearchCenter({ lat: location.lat(), lng: location.lng() });
+      });
+    }
     if (result.person) setSelected(result.person);
     setSearchQuery(result.label);
     setSearchOpen(false);
@@ -208,6 +232,17 @@ export default function Home() {
     event.preventDefault();
     if (searchResults[0]) selectSearchResult(searchResults[0]);
   }
+
+  useEffect(() => {
+    const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
+    const query = searchQuery.trim();
+    if (!mapsReady || !query || !mapsApi?.maps.places) {
+      setPlaceResults([]);
+      return;
+    }
+    const autocomplete = new mapsApi.maps.places.AutocompleteService();
+    autocomplete.getPlacePredictions({ input: query }, (predictions) => setPlaceResults(predictions || []));
+  }, [mapsReady, searchQuery]);
 
   useEffect(() => {
     async function loadMapData() {
@@ -306,7 +341,7 @@ export default function Home() {
 
   return (
     <main className="command-shell">
-      {(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY) && <Script src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY}`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
+      {(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY) && <Script src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY}&libraries=places`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
       <header className="topbar">
         <div className="brand"><span className="brand-mark">+</span><span>SafePath <b>AI</b></span><small>EMERGENCY OPERATIONS</small></div>
         <div className="top-actions"><span className="demo-pill"><i /> DEMO MODE</span><span className="sync"><i /> SYSTEMS ONLINE</span><button className="icon-button" aria-label="Settings">⚙</button><div className="operator">OP <span>AO</span></div></div>
