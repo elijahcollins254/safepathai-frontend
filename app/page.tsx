@@ -211,13 +211,13 @@ export default function Home() {
     setSearchOpen(false);
     setMode("none");
     setSearchCenter(result.position);
-    setSearchZoom(result.person ? 14 : 12);
+    setSearchZoom(result.person ? 4 : 3);
   }
 
   function selectPerson(person: ApiPerson) {
     setSelected(person);
     setSearchCenter({ lat: person.latitude, lng: person.longitude });
-    setSearchZoom(14);
+    setSearchZoom(3);
   }
 
   function selectZone(zone: Zone) {
