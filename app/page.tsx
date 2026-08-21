@@ -147,7 +147,6 @@ function GoogleMapSurface({ onSelect, recenterPoint, recenterZoom, ready, mode, 
     });
 
     overlays.current = nextOverlays;
-    if (apiKey && mapInstance.current) mapInstance.current.setCenter(mapCenter);
   }, [onSelect, apiKey, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneClose, onZoneDrawn]);
 
   useEffect(() => {
