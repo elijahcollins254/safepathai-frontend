@@ -64,6 +64,12 @@ function zoomForZone(coordinates: LatLng[]): number {
   return Math.max(5, Math.min(14, Math.floor(Math.log2(360 / span)) - 1));
 }
 
+function zoomForPerson(person: ApiPerson, zones: Zone[]): number {
+  const position = { lat: person.latitude, lng: person.longitude };
+  const containingZone = zones.find((zone) => pointInPolygon(position, zone.coordinates));
+  return containingZone ? zoomForZone(containingZone.coordinates) : 14;
+}
+
 function GoogleMapSurface({ onSelect, recenterPoint, recenterZoom, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneClose, onZoneDrawn }: { onSelect: (person: ApiPerson) => void; recenterPoint: LatLng | null; recenterZoom: number; ready: boolean; mode: EditMode; people: ApiPerson[]; zones: Zone[]; zonePoints: LatLng[]; finishZoneSignal: number; onPointSelect: (point: LatLng) => void; onZonePoint: (point: LatLng) => void; onZoneClose: (firstPoint?: LatLng) => void; onZoneDrawn: (coordinates: LatLng[], polygon: GooglePolygon) => void }) {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<GoogleMapInstance | null>(null);
@@ -219,13 +225,13 @@ export default function Home() {
     setSearchOpen(false);
     setMode("none");
     setSearchCenter(result.position);
-    setSearchZoom(result.person ? 4 : 3);
+    setSearchZoom(result.person ? zoomForPerson(result.person, zones) : 3);
   }
 
   function selectPerson(person: ApiPerson) {
     setSelected(person);
     setSearchCenter({ lat: person.latitude, lng: person.longitude });
-    setSearchZoom(3);
+    setSearchZoom(zoomForPerson(person, zones));
   }
 
   function selectZone(zone: Zone) {
