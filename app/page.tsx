@@ -17,20 +17,12 @@ type GoogleMapsApi = {
     Marker: new (options: Record<string, unknown>) => GoogleOverlay;
     Polygon: new (options: Record<string, unknown>) => GoogleOverlay;
     Polyline: new (options: Record<string, unknown>) => GoogleOverlay;
-    places?: {
-      AutocompleteService: new () => GoogleAutocompleteService;
-      PlacesService: new (element: HTMLElement) => GooglePlacesService;
-      PlacesServiceStatus: { OK: string };
-    };
   };
 };
 type GoogleMapInstance = { setCenter: (center: LatLng) => void; addListener?: (event: string, callback: (event: { latLng?: { lat: () => number; lng: () => number } }) => void) => GoogleListener };
 type GoogleOverlay = { setMap: (map: GoogleMapInstance | null) => void };
 type GooglePolygon = GoogleOverlay & { getPath: () => { getArray: () => Array<{ lat: () => number; lng: () => number }> } };
 type GoogleListener = { remove: () => void };
-type GoogleAutocompletePrediction = { place_id: string; description: string; structured_formatting?: { main_text: string; secondary_text: string } };
-type GoogleAutocompleteService = { getPlacePredictions: (request: { input: string }, callback: (predictions: GoogleAutocompletePrediction[] | null, status: string) => void) => void };
-type GooglePlacesService = { getDetails: (request: { placeId: string; fields: string[] }, callback: (place: { geometry?: { location?: { lat: () => number; lng: () => number } } } | null, status: string) => void) => void };
 
 const mapCenter: LatLng = { lat: 5, lng: 20 };
 const googleMapStyles = [
@@ -172,14 +164,18 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchCenter, setSearchCenter] = useState<LatLng | null>(null);
-  const [placeResults, setPlaceResults] = useState<GoogleAutocompletePrediction[]>([]);
   const [zoneDraft, setZoneDraft] = useState<{ coordinates: LatLng[]; polygon: GooglePolygon } | null>(null);
   const [form, setForm] = useState({ name: "", phone: "", details: "", status: "safe" as "safe" | "at_risk", zoneType: "hazard" as Zone["zone_type"] });
   const [saveError, setSaveError] = useState("");
   const effectivePeople = people.map((person) => ({
     ...person,
-    status: zones.some((zone) => zone.zone_type === "hazard" && pointInPolygon({ lat: person.latitude, lng: person.longitude }, zone.coordinates)) ? "at_risk" as const : person.status,
+    status: zones.some((zone) => zone.zone_type === "safe" && pointInPolygon({ lat: person.latitude, lng: person.longitude }, zone.coordinates))
+      ? "safe" as const
+      : zones.some((zone) => zone.zone_type === "hazard" && pointInPolygon({ lat: person.latitude, lng: person.longitude }, zone.coordinates))
+        ? "at_risk" as const
+        : person.status,
   }));
+  const effectiveSelected = selected ? effectivePeople.find((person) => person.id === selected.id) ?? selected : null;
   const affected = effectivePeople.filter((person) => person.status === "at_risk");
   const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
   const normalizedApiBaseUrl = configuredApiBaseUrl.replace(/\/+$/, "");
@@ -202,25 +198,10 @@ export default function Home() {
     zones.forEach((zone) => {
       if (`${zone.name} ${zone.details}`.toLowerCase().includes(query) && zone.coordinates[0]) results.push({ id: `zone-${zone.id}`, label: zone.name, detail: `${zone.zone_type.replace("_", " ")} zone`, position: zone.coordinates[0] });
     });
-    const placeSearchResults = placeResults.slice(0, 5).map((place) => ({
-      id: `place-${place.place_id}`,
-      label: place.structured_formatting?.main_text || place.description,
-      detail: place.structured_formatting?.secondary_text || "Google place",
-      position: mapCenter,
-    }));
-    return [...results, ...placeSearchResults].slice(0, 6);
+    return results.slice(0, 6);
   })();
 
   function selectSearchResult(result: SearchResult) {
-    const placeId = result.id.startsWith("place-") ? result.id.slice(6) : null;
-    const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
-    if (placeId && mapsApi?.maps.places) {
-      const service = new mapsApi.maps.places.PlacesService(document.createElement("div"));
-      service.getDetails({ placeId, fields: ["geometry"] }, (place, status) => {
-        const location = status === mapsApi.maps.places?.PlacesServiceStatus.OK ? place?.geometry?.location : undefined;
-        if (location) setSearchCenter({ lat: location.lat(), lng: location.lng() });
-      });
-    }
     if (result.person) setSelected(result.person);
     setSearchQuery(result.label);
     setSearchOpen(false);
@@ -232,17 +213,6 @@ export default function Home() {
     event.preventDefault();
     if (searchResults[0]) selectSearchResult(searchResults[0]);
   }
-
-  useEffect(() => {
-    const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
-    const query = searchQuery.trim();
-    if (!mapsReady || !query || !mapsApi?.maps.places) {
-      setPlaceResults([]);
-      return;
-    }
-    const autocomplete = new mapsApi.maps.places.AutocompleteService();
-    autocomplete.getPlacePredictions({ input: query }, (predictions) => setPlaceResults(predictions || []));
-  }, [mapsReady, searchQuery]);
 
   useEffect(() => {
     async function loadMapData() {
@@ -341,7 +311,7 @@ export default function Home() {
 
   return (
     <main className="command-shell">
-      {(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY) && <Script src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY}&libraries=places`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
+      {(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY) && <Script src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY}`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
       <header className="topbar">
         <div className="brand"><span className="brand-mark">+</span><span>SafePath <b>AI</b></span><small>EMERGENCY OPERATIONS</small></div>
         <div className="top-actions"><span className="demo-pill"><i /> DEMO MODE</span><span className="sync"><i /> SYSTEMS ONLINE</span><button className="icon-button" aria-label="Settings">⚙</button><div className="operator">OP <span>AO</span></div></div>
@@ -360,7 +330,7 @@ export default function Home() {
             <div className="control-section"><div className="section-title"><span>DISASTER CONTROLS</span><button className="more">•••</button></div><label className="field-label">DISASTER TYPE<select defaultValue="Flood"><option>Flood</option><option>Wildfire</option><option>Landslide</option></select></label><label className="field-label">SEVERITY<div className="severity-options"><button className="low">Low</button><button className="medium">Med</button><button className="high">High</button><button className="critical active">Critical</button></div></label></div>
             <div className="simulation-section"><div className="section-title"><span>SIMULATION</span><span className="stage-label">{stage === "standby" ? "READY" : stage.toUpperCase()}</span></div><button className="primary-action" onClick={() => setStage("active")} disabled={stage !== "standby"}><span>△</span> Activate disaster</button><button className="secondary-action" onClick={() => setStage("routed")} disabled={stage === "standby"}>Calculate safe routes <span>→</span></button><button className="alert-action" onClick={sendEmergencyAlerts} disabled={stage !== "routed" || alertStatus === "sending"}><span>◉</span> {alertStatus === "sending" ? "Sending SMS..." : "Send emergency alerts"} <span className="count">{affected.length}</span></button><label className="test-recipient">TEST SMS NUMBER<input value={testRecipient} onChange={(event) => setTestRecipient(event.target.value)} placeholder="+254712345678" inputMode="tel" /></label><button className="test-action" onClick={sendTestSms} disabled={!testRecipient || alertStatus === "sending"}>Send test SMS</button>{alertStatus === "error" && <p className="alert-error">SMS failed. Use E.164 format, for example +254712345678.</p>}{alertStatus === "sent" && <p className="alert-success">SMS accepted by Africa&apos;s Talking.</p>}<button className="reset-action" onClick={loadDemo}>Reset simulation</button></div>
           </>}
-          {panel === "people" && <div className="list-panel">{people.map((person) => <button className="person-list" key={`saved-${person.id}`} onClick={() => setSelected(person)}><i className={person.status === "at_risk" ? "person-risk" : "person-safe"} /><span>{person.name}<small>{person.phone || "No phone number"}</small></span><b>{person.status === "at_risk" ? "AT RISK" : "SAFE"}</b></button>)}</div>}
+          {panel === "people" && <div className="list-panel">{effectivePeople.map((person) => <button className="person-list" key={`saved-${person.id}`} onClick={() => setSelected(person)}><i className={person.status === "at_risk" ? "person-risk" : "person-safe"} /><span>{person.name}<small>{person.phone || "No phone number"}</small></span><b>{person.status === "at_risk" ? "AT RISK" : "SAFE"}</b></button>)}</div>}
           {panel === "shelters" && <div className="list-panel">{zones.filter((zone) => zone.zone_type === "safe").map((zone) => <div className="shelter-list" key={zone.id}><i>⌂</i><span>{zone.name}<small>{zone.details || "Database safe zone"}</small></span><b>SAFE</b></div>)}</div>}
           <div className="disclaimer">Recommended based on available hazard and map data.<br /><span>Prototype simulation · Not a guarantee of physical safety</span></div>
         </aside>
@@ -373,7 +343,7 @@ export default function Home() {
             {zoneDraft && <form className="map-form" onSubmit={saveMapItem}><span className="eyebrow">NEW ZONE</span><input required placeholder="Zone name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><select value={form.zoneType} onChange={(event) => setForm({ ...form, zoneType: event.target.value as Zone["zone_type"] })}><option value="safe">Safe zone</option><option value="at_risk">At risk zone</option><option value="hazard">Hazard zone</option></select><textarea placeholder="Details" value={form.details} onChange={(event) => setForm({ ...form, details: event.target.value })} /><button type="submit">Save zone</button><button type="button" onClick={() => { zoneDraft.polygon.setMap(null); setZoneDraft(null); setZonePoints([]); }}>Cancel</button></form>}
             {saveError && <p className="save-error">{saveError}</p>}
             <div className="map-key"><span><i className="key-safe" /> Safe</span><span><i className="key-risk" /> At risk</span><span><i className="key-zone" /> Hazard zone</span></div><div className="zoom-controls"><button>+</button><button>−</button></div><div className="map-attribution">Map data © SafePath simulation</div>
-            {selected && <div className="person-card"><button className="close-card" onClick={() => setSelected(null)}>×</button><span className="eyebrow">PERSON PROFILE</span><h2>{selected.name}</h2><p>{selected.phone || "No phone number"}</p><div className="card-status"><i className={selected.status === "at_risk" ? "key-risk" : "key-safe"} /> {selected.status === "at_risk" ? "AT RISK" : "SAFE"}</div>{selected.details && <div className="evacuation"><span>DETAILS</span><strong>{selected.details}</strong></div>}</div>}
+            {effectiveSelected && <div className="person-card"><button className="close-card" onClick={() => setSelected(null)}>×</button><span className="eyebrow">PERSON PROFILE</span><h2>{effectiveSelected.name}</h2><p>{effectiveSelected.phone || "No phone number"}</p><div className="card-status"><i className={effectiveSelected.status === "at_risk" ? "key-risk" : "key-safe"} /> {effectiveSelected.status === "at_risk" ? "AT RISK" : "SAFE"}</div>{effectiveSelected.details && <div className="evacuation"><span>DETAILS</span><strong>{effectiveSelected.details}</strong></div>}</div>}
           </div>
           <div className="map-footer"><div><span className="eyebrow">OPERATION</span><strong>Detect <b>→</b> Identify <b>→</b> Route <b>→</b> Communicate</strong></div>{stage === "alerted" && <div className="alert-banner"><span>✓</span><strong>{affected.length} evacuation alerts sent</strong><small>Africa&apos;s Talking · Demo queue</small></div>}{stage === "active" && <div className="alert-banner warning"><span>!</span><strong>{affected.length} people need evacuation</strong><small>Calculate safe routes to continue</small></div>}</div>
         </div>
