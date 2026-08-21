@@ -37,7 +37,25 @@ const googleMapStyles = [
   { featureType: "poi", stylers: [{ visibility: "simplified" }] },
 ];
 
-function GoogleMapSurface({ onSelect, recenterPoint, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneDrawn }: { onSelect: (person: ApiPerson) => void; recenterPoint: LatLng | null; ready: boolean; mode: EditMode; people: ApiPerson[]; zones: Zone[]; zonePoints: LatLng[]; finishZoneSignal: number; onPointSelect: (point: LatLng) => void; onZonePoint: (point: LatLng) => void; onZoneDrawn: (coordinates: LatLng[], polygon: GooglePolygon) => void }) {
+function distanceBetweenPoints(first: LatLng, second: LatLng): number {
+  const latitudeDistance = (second.lat - first.lat) * 111_000;
+  const longitudeDistance = (second.lng - first.lng) * 111_000 * Math.cos(first.lat * Math.PI / 180);
+  return Math.sqrt(latitudeDistance ** 2 + longitudeDistance ** 2);
+}
+
+function pointInPolygon(point: LatLng, polygon: LatLng[]): boolean {
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const current = polygon[index];
+    const prior = polygon[previous];
+    const crosses = current.lng > point.lng !== prior.lng > point.lng
+      && point.lat < (prior.lat - current.lat) * (point.lng - current.lng) / (prior.lng - current.lng) + current.lat;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+function GoogleMapSurface({ onSelect, recenterPoint, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneClose, onZoneDrawn }: { onSelect: (person: ApiPerson) => void; recenterPoint: LatLng | null; ready: boolean; mode: EditMode; people: ApiPerson[]; zones: Zone[]; zonePoints: LatLng[]; finishZoneSignal: number; onPointSelect: (point: LatLng) => void; onZonePoint: (point: LatLng) => void; onZoneClose: (firstPoint?: LatLng) => void; onZoneDrawn: (coordinates: LatLng[], polygon: GooglePolygon) => void }) {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<GoogleMapInstance | null>(null);
   const overlays = useRef<GoogleOverlay[]>([]);
@@ -74,11 +92,26 @@ function GoogleMapSurface({ onSelect, recenterPoint, ready, mode, people, zones,
 
     if (mode === "zone") {
       const listener = mapInstance.current.addListener?.("click", (event) => {
-        if (event.latLng) onZonePoint({ lat: event.latLng.lat(), lng: event.latLng.lng() });
+        if (!event.latLng) return;
+        const point = { lat: event.latLng.lat(), lng: event.latLng.lng() };
+        if (zonePoints.length >= 3 && distanceBetweenPoints(point, zonePoints[0]) <= 250) {
+          onZoneClose(zonePoints[0]);
+          return;
+        }
+        onZonePoint(point);
       });
       if (listener) mapListeners.current.push(listener);
       if (zonePoints.length > 1) {
         nextOverlays.push(new mapsApi.maps.Polyline({ map: mapInstance.current, path: zonePoints, strokeColor: "#f05d5e", strokeWeight: 2, strokeOpacity: 0.9 }));
+      }
+      if (zonePoints.length > 0) {
+        nextOverlays.push(new mapsApi.maps.Marker({
+          map: mapInstance.current,
+          position: zonePoints[0],
+          title: zonePoints.length >= 3 ? "Click here to close the zone" : "Zone starting point",
+          label: { text: "1", color: "#ffffff", fontWeight: "700" },
+          icon: { path: "M 0,0 m -11,0 a 11,11 0 1,0 22,0 a 11,11 0 1,0 -22,0", fillColor: "#f05d5e", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2, scale: 1 },
+        }));
       }
     }
 
@@ -106,7 +139,7 @@ function GoogleMapSurface({ onSelect, recenterPoint, ready, mode, people, zones,
 
     overlays.current = nextOverlays;
     if (apiKey && mapInstance.current) mapInstance.current.setCenter(mapCenter);
-  }, [onSelect, apiKey, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneDrawn]);
+  }, [onSelect, apiKey, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneClose, onZoneDrawn]);
 
   useEffect(() => {
     if (recenterPoint && mapInstance.current) mapInstance.current.setCenter(recenterPoint);
@@ -134,7 +167,11 @@ export default function Home() {
   const [zoneDraft, setZoneDraft] = useState<{ coordinates: LatLng[]; polygon: GooglePolygon } | null>(null);
   const [form, setForm] = useState({ name: "", phone: "", details: "", status: "safe" as "safe" | "at_risk", zoneType: "hazard" as Zone["zone_type"] });
   const [saveError, setSaveError] = useState("");
-  const affected = people.filter((person) => person.status === "at_risk");
+  const effectivePeople = people.map((person) => ({
+    ...person,
+    status: zones.some((zone) => zone.zone_type === "hazard" && pointInPolygon({ lat: person.latitude, lng: person.longitude }, zone.coordinates)) ? "at_risk" as const : person.status,
+  }));
+  const affected = effectivePeople.filter((person) => person.status === "at_risk");
   const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
   const normalizedApiBaseUrl = configuredApiBaseUrl.replace(/\/+$/, "");
   const apiBaseUrl = normalizedApiBaseUrl.endsWith("/api")
@@ -199,6 +236,11 @@ export default function Home() {
     setZonePoints([]);
     setZoneDraft(null);
     setMode("zone");
+  }
+
+  function closeZone(firstPoint?: LatLng) {
+    if (firstPoint) setZonePoints((current) => current.length >= 3 ? [...current, firstPoint] : current);
+    setFinishZoneSignal((current) => current + 1);
   }
 
   async function saveMapItem(event: FormEvent<HTMLFormElement>) {
@@ -290,8 +332,8 @@ export default function Home() {
 
         <div className="map-panel">
           <div className="map-toolbar"><form className="search-form" onSubmit={submitSearch}><span className="search-icon">⌕</span><input className="search-input" aria-label="Search people, places, or coordinates" placeholder="Search people, places, or coordinates" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} />{searchOpen && searchQuery.trim() && <div className="search-results">{searchResults.length ? searchResults.map((result) => <button type="button" className="search-result" key={result.id} onClick={() => selectSearchResult(result)}><strong>{result.label}</strong><small>{result.detail}</small></button>) : <span className="search-empty">No matching map data</span>}</div>}</form><button className="map-button">Layers</button><button className="map-button">◎</button></div>
-          <div className="map-canvas"><GoogleMapSurface onSelect={setSelected} recenterPoint={searchCenter} ready={mapsReady} mode={mode} people={people} zones={zones} zonePoints={zonePoints} finishZoneSignal={finishZoneSignal} onPointSelect={setPersonPoint} onZonePoint={(point) => setZonePoints((current) => [...current, point])} onZoneDrawn={(coordinates, polygon) => { setZoneDraft({ coordinates, polygon }); setMode("none"); }} />
-            <div className="map-edit-toolbar"><button className={mode === "person" ? "active" : ""} onClick={startPerson}>+ Add person</button><button className={mode === "zone" ? "active" : ""} onClick={startZone}>Draw zone</button>{mode === "zone" && <button className="finish-zone" onClick={() => setFinishZoneSignal((current) => current + 1)} disabled={zonePoints.length < 3}>Finish zone ({zonePoints.length}/3)</button>}</div>
+          <div className="map-canvas"><GoogleMapSurface onSelect={setSelected} recenterPoint={searchCenter} ready={mapsReady} mode={mode} people={effectivePeople} zones={zones} zonePoints={zonePoints} finishZoneSignal={finishZoneSignal} onPointSelect={setPersonPoint} onZonePoint={(point) => setZonePoints((current) => [...current, point])} onZoneClose={closeZone} onZoneDrawn={(coordinates, polygon) => { setZoneDraft({ coordinates, polygon }); setMode("none"); }} />
+            <div className="map-edit-toolbar"><button className={mode === "person" ? "active" : ""} onClick={startPerson}>+ Add person</button><button className={mode === "zone" ? "active" : ""} onClick={startZone}>Draw zone</button>{mode === "zone" && <button className="finish-zone" onClick={() => closeZone()} disabled={zonePoints.length < 3}>Finish zone ({zonePoints.length}/3)</button>}</div>
             {personPoint && <form className="map-form" onSubmit={saveMapItem}><span className="eyebrow">NEW PERSON</span><input required placeholder="Full name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input placeholder="Phone number" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} /><select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as "safe" | "at_risk" })}><option value="safe">Safe</option><option value="at_risk">At risk</option></select><textarea placeholder="Details" value={form.details} onChange={(event) => setForm({ ...form, details: event.target.value })} /><button type="submit">Save person</button><button type="button" onClick={() => { setPersonPoint(null); setMode("none"); }}>Cancel</button></form>}
             {zoneDraft && <form className="map-form" onSubmit={saveMapItem}><span className="eyebrow">NEW ZONE</span><input required placeholder="Zone name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><select value={form.zoneType} onChange={(event) => setForm({ ...form, zoneType: event.target.value as Zone["zone_type"] })}><option value="safe">Safe zone</option><option value="at_risk">At risk zone</option><option value="hazard">Hazard zone</option></select><textarea placeholder="Details" value={form.details} onChange={(event) => setForm({ ...form, details: event.target.value })} /><button type="submit">Save zone</button><button type="button" onClick={() => { zoneDraft.polygon.setMap(null); setZoneDraft(null); setZonePoints([]); }}>Cancel</button></form>}
             {saveError && <p className="save-error">{saveError}</p>}
