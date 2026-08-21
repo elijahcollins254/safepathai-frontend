@@ -55,6 +55,15 @@ function pointInPolygon(point: LatLng, polygon: LatLng[]): boolean {
   return inside;
 }
 
+function zoomForZone(coordinates: LatLng[]): number {
+  const latitudes = coordinates.map((coordinate) => coordinate.lat);
+  const longitudes = coordinates.map((coordinate) => coordinate.lng);
+  const latitudeSpan = Math.max(...latitudes) - Math.min(...latitudes);
+  const longitudeSpan = Math.max(...longitudes) - Math.min(...longitudes);
+  const span = Math.max(latitudeSpan, longitudeSpan, 0.01);
+  return Math.max(5, Math.min(14, Math.floor(Math.log2(360 / span)) - 1));
+}
+
 function GoogleMapSurface({ onSelect, recenterPoint, recenterZoom, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneClose, onZoneDrawn }: { onSelect: (person: ApiPerson) => void; recenterPoint: LatLng | null; recenterZoom: number; ready: boolean; mode: EditMode; people: ApiPerson[]; zones: Zone[]; zonePoints: LatLng[]; finishZoneSignal: number; onPointSelect: (point: LatLng) => void; onZonePoint: (point: LatLng) => void; onZoneClose: (firstPoint?: LatLng) => void; onZoneDrawn: (coordinates: LatLng[], polygon: GooglePolygon) => void }) {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<GoogleMapInstance | null>(null);
@@ -227,7 +236,7 @@ export default function Home() {
       { lat: 0, lng: 0 },
     );
     setSearchCenter({ lat: center.lat / zone.coordinates.length, lng: center.lng / zone.coordinates.length });
-    setSearchZoom(12);
+    setSearchZoom(zoomForZone(zone.coordinates));
   }
 
   function submitSearch(event: FormEvent<HTMLFormElement>) {
@@ -341,7 +350,7 @@ export default function Home() {
       <section className="workspace">
         <aside className="sidebar">
           <div className="sidebar-heading"><div><span className="eyebrow">COMMAND CENTER</span><h1>Mission control</h1></div><span className="live-dot" /></div>
-          <nav className="nav-tabs"><button className={panel === "overview" ? "selected" : ""} onClick={() => setPanel("overview")}>Overview</button><button className={panel === "people" ? "selected" : ""} onClick={() => setPanel("people")}>People <em>{people.length}</em></button><button className={panel === "shelters" ? "selected" : ""} onClick={() => setPanel("shelters")}>Safe zones <em>{zones.filter((zone) => zone.zone_type === "safe").length}</em></button></nav>
+          <nav className="nav-tabs"><button className={panel === "overview" ? "selected" : ""} onClick={() => setPanel("overview")}>Overview</button><button className={panel === "people" ? "selected" : ""} onClick={() => setPanel("people")}>People <em>{people.length}</em></button><button className={panel === "shelters" ? "selected" : ""} onClick={() => setPanel("shelters")}>Zones <em>{zones.length}</em></button></nav>
 
           <div className="status-card"><div className="status-row"><span className={`status-icon ${stage === "standby" ? "quiet" : "danger"}`}>!</span><div><span className="eyebrow">CURRENT INCIDENT</span><strong>{stage === "standby" ? "No active incident" : "Critical flood"}</strong></div></div><div className="status-details"><span className={stage === "standby" ? "muted" : "danger-text"}>{stage === "standby" ? "Monitoring area" : "ACTIVE · FLOOD ZONE"}</span><span>Updated just now</span></div></div>
 
@@ -352,7 +361,7 @@ export default function Home() {
             <div className="simulation-section"><div className="section-title"><span>SIMULATION</span><span className="stage-label">{stage === "standby" ? "READY" : stage.toUpperCase()}</span></div><button className="primary-action" onClick={() => setStage("active")} disabled={stage !== "standby"}><span>△</span> Activate disaster</button><button className="secondary-action" onClick={() => setStage("routed")} disabled={stage === "standby"}>Calculate safe routes <span>→</span></button><button className="alert-action" onClick={sendEmergencyAlerts} disabled={stage !== "routed" || alertStatus === "sending"}><span>◉</span> {alertStatus === "sending" ? "Sending SMS..." : "Send emergency alerts"} <span className="count">{affected.length}</span></button><label className="test-recipient">TEST SMS NUMBER<input value={testRecipient} onChange={(event) => setTestRecipient(event.target.value)} placeholder="+254712345678" inputMode="tel" /></label><button className="test-action" onClick={sendTestSms} disabled={!testRecipient || alertStatus === "sending"}>Send test SMS</button>{alertStatus === "error" && <p className="alert-error">SMS failed. Use E.164 format, for example +254712345678.</p>}{alertStatus === "sent" && <p className="alert-success">SMS accepted by Africa&apos;s Talking.</p>}<button className="reset-action" onClick={loadDemo}>Reset simulation</button></div>
           </>}
           {panel === "people" && <div className="list-panel">{effectivePeople.map((person) => <button className="person-list" key={`saved-${person.id}`} onClick={() => selectPerson(person)}><i className={person.status === "at_risk" ? "person-risk" : "person-safe"} /><span>{person.name}<small>{person.phone || "No phone number"}</small></span><b>{person.status === "at_risk" ? "AT RISK" : "SAFE"}</b></button>)}</div>}
-          {panel === "shelters" && <div className="list-panel">{zones.filter((zone) => zone.zone_type === "safe").map((zone) => <button className="shelter-list" key={zone.id} onClick={() => selectZone(zone)}><i>⌂</i><span>{zone.name}<small>{zone.details || "Database safe zone"}</small></span><b>SAFE</b></button>)}</div>}
+          {panel === "shelters" && <div className="list-panel">{zones.map((zone) => { const label = zone.zone_type === "hazard" ? "HAZARD" : zone.zone_type === "at_risk" ? "AT RISK" : "SAFE"; return <button className="shelter-list" key={zone.id} onClick={() => selectZone(zone)}><i>⌂</i><span>{zone.name}<small>{zone.details || `${zone.zone_type.replace("_", " ")} zone`}</small></span><b>{label}</b></button>; })}</div>}
           <div className="disclaimer">Recommended based on available hazard and map data.<br /><span>Prototype simulation · Not a guarantee of physical safety</span></div>
         </aside>
 
