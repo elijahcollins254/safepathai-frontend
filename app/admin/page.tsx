@@ -1,5 +1,5 @@
-import Home from "../page";
+import AdminConsole from "./AdminConsole";
 
 export default function AdminPage() {
-  return <Home initialView="operator" />;
+  return <AdminConsole />;
 }

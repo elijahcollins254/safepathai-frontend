@@ -56,6 +56,14 @@ button, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .42; }
 
+.site-home { background: #123f43; color: #f5f1e6; min-height: 100vh; overflow: hidden; position: relative; }
+.site-home::before { background: repeating-linear-gradient(125deg, transparent 0 105px, rgba(151, 207, 183, .08) 106px 108px, transparent 109px 190px); content: ""; inset: 0; pointer-events: none; position: absolute; }
+.site-nav, .site-home-content, .site-home-links { margin: auto; max-width: 1180px; position: relative; z-index: 1; }
+.site-nav { align-items: center; display: flex; justify-content: space-between; padding: 25px 32px; }.site-nav strong { align-items: center; display: flex; font-size: 18px; gap: 9px; }.site-nav b { color: #8ee1bc; }.site-nav > span { color: #b5d1c4; font-size: 11px; }
+.site-home-content { padding: 110px 32px 125px; }.site-home-content h1 { font-size: clamp(48px, 8vw, 94px); letter-spacing: -.06em; line-height: .95; margin: 16px 0 20px; max-width: 700px; }.site-home-content p { color: #c2d8ce; font-size: 17px; line-height: 1.55; margin: 0 0 30px; max-width: 570px; }.site-home-actions { display: flex; flex-wrap: wrap; gap: 10px; }.home-primary, .home-secondary { border-radius: 5px; font-size: 12px; font-weight: 750; padding: 14px 17px; text-decoration: none; }.home-primary { background: #ed6b58; color: white; }.home-secondary { border: 1px solid rgba(245, 241, 230, .35); color: #f5f1e6; }.home-primary span, .home-secondary span { font-size: 17px; margin-left: 24px; }
+.site-home-links { border-top: 1px solid rgba(245, 241, 230, .16); display: grid; gap: 35px; grid-template-columns: repeat(2, 1fr); padding: 27px 32px 45px; }.site-home-links strong { display: block; font-size: 17px; margin-top: 8px; }.site-home-links p { color: #a9c7b9; font-size: 12px; line-height: 1.5; margin: 7px 0 0; max-width: 320px; }
+@media (max-width: 680px) { .site-nav { align-items: flex-start; flex-direction: column; gap: 13px; padding: 20px 18px; }.site-home-content { padding: 88px 18px 100px; }.site-home-content h1 { font-size: 58px; }.site-home-content p { font-size: 15px; }.site-home-actions { align-items: stretch; flex-direction: column; max-width: 330px; }.site-home-links { grid-template-columns: 1fr; padding: 23px 18px 35px; } }
+
 .command-shell { min-height: 100vh; background: #081018; color: var(--foreground); }
 .topbar { align-items: center; background: #0b151e; border-bottom: 1px solid var(--line); display: flex; height: 68px; justify-content: space-between; padding: 0 28px; }
 .brand { align-items: center; display: flex; font-size: 18px; font-weight: 650; gap: 10px; letter-spacing: -.02em; position: relative; }

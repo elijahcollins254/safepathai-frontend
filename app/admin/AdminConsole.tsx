@@ -1,21 +1,9 @@
 "use client";
 
-import Link from "next/link";
+import Script from "next/script";
+import { useRouter } from "next/navigation";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
-/* The root route is intentionally a lightweight doorway into the two experiences. */
-export default function SiteHome() {
-  return (
-    <main className="site-home">
-      <nav className="site-nav"><strong><span className="resident-mark">+</span> SafePath <b>AI</b></strong><span>Emergency guidance for people and response teams</span></nav>
-      <section className="site-home-content"><span className="eyebrow light-eyebrow">SAFETY, CONNECTED</span><h1>Know where to go next.</h1><p>SafePath AI brings clear, local disaster guidance to residents and practical coordination tools to emergency teams.</p><div className="site-home-actions"><Link className="home-primary" href="/home">I need safety guidance <span>→</span></Link><Link className="home-secondary" href="/admin">Open response center <span>→</span></Link></div></section>
-      <section className="site-home-links"><div><span className="eyebrow">FOR RESIDENTS</span><strong>Simple route guidance</strong><p>See active hazards, compare help points, and choose a route with less guesswork.</p></div><div><span className="eyebrow">FOR RESPONSE TEAMS</span><strong>Focused coordination</strong><p>Map people and zones, calculate routes, and communicate alerts from one workspace.</p></div></section>
-    </main>
-  );
-}
-
-/* Legacy implementation was moved to app/admin/AdminConsole.tsx and app/home/ResidentExperience.tsx. */
-/* The declarations below are removed by the route split. */
-/*
 type ApiPerson = { id: number; name: string; phone: string; details: string; latitude: number; longitude: number; status: "safe" | "at_risk" };
 type Zone = { id: number; name: string; zone_type: "safe" | "at_risk" | "hazard"; details: string; coordinates: LatLng[] };
 type Stage = "standby" | "active" | "routed" | "alerted";
@@ -92,76 +80,6 @@ function formatDistance(meters: number): string {
 
 function formatDuration(seconds: number): string {
   return `${Math.max(1, Math.round(seconds / 60))} min`;
-}
-
-function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string }) {
-  const router = useRouter();
-  const [hazards, setHazards] = useState<Hazard[]>([]);
-  const [shelters, setShelters] = useState<Shelter[]>([]);
-  const [location, setLocation] = useState<LatLng | null>(null);
-  const [locationLabel, setLocationLabel] = useState("Location not shared");
-  const [routes, setRoutes] = useState<ResidentRoute[]>([]);
-  const [selectedRoute, setSelectedRoute] = useState<ResidentRoute | null>(null);
-  const [language, setLanguage] = useState("English");
-  const [chatOpen, setChatOpen] = useState(false);
-  const [loadingRoutes, setLoadingRoutes] = useState(false);
-  const [routeMessage, setRouteMessage] = useState("");
-
-  useEffect(() => {
-    async function loadPublicData() {
-      try {
-        const [hazardsResponse, sheltersResponse] = await Promise.all([fetch(`${apiBaseUrl}/hazards/`), fetch(`${apiBaseUrl}/shelters/`)]);
-        if (hazardsResponse.ok) setHazards((await hazardsResponse.json()).filter((hazard: Hazard) => hazard.status === "active"));
-        if (sheltersResponse.ok) setShelters((await sheltersResponse.json()).filter((shelter: Shelter) => shelter.status === "open"));
-      } catch {
-        setRouteMessage("Live safety data is temporarily unavailable. Call local emergency services if you are in immediate danger.");
-      }
-    }
-    void loadPublicData();
-  }, [apiBaseUrl]);
-
-  function shareLocation() {
-    if (!navigator.geolocation) {
-      setRouteMessage("Location sharing is not available in this browser.");
-      return;
-    }
-    navigator.geolocation.getCurrentPosition((position) => {
-      const nextLocation = { lat: position.coords.latitude, lng: position.coords.longitude };
-      setLocation(nextLocation);
-      setLocationLabel("Your location shared");
-      setRouteMessage("");
-    }, () => setRouteMessage("We could not access your location. You can try again or contact emergency services."), { enableHighAccuracy: true, timeout: 10000 });
-  }
-
-  async function findRoutes() {
-    if (!location) {
-      shareLocation();
-      return;
-    }
-    setLoadingRoutes(true);
-    setRouteMessage("");
-    try {
-      const response = await fetch(`${apiBaseUrl}/route/recommend/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ latitude: location.lat, longitude: location.lng }) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Route search failed");
-      setRoutes(result.routes || []);
-      setSelectedRoute(result.recommended_route || null);
-      if (!result.routes?.length) setRouteMessage("No clear route is available right now. Move to a safe, elevated place and wait for an updated alert.");
-    } catch {
-      setRouteMessage("Routes could not be calculated right now. Stay away from marked hazard areas and seek local help.");
-    } finally {
-      setLoadingRoutes(false);
-    }
-  }
-
-  const copy = language === "Swahili" ? { title: "Njia salama kwako", subtitle: "Pata maelekezo ya haraka kulingana na hatari zilizo karibu.", share: "Shiriki eneo langu", route: "Nionyeshe njia", help: "Mahali pa kupata msaada", risks: "Elewa hatari", calm: "Nahitaji msaada wa utulivu" } : { title: "A safer way through", subtitle: "Get clear guidance based on hazards near you. Share your location once, then choose a route.", share: "Share my location", route: "Find my safe route", help: "Help nearby", risks: "Understand the risk", calm: "I need help staying calm" };
-
-  return (
-    <main className="resident-shell">
-      <section className="resident-hero"><div className="resident-nav"><div className="resident-brand"><span className="resident-mark">+</span><strong>SafePath <b>AI</b></strong><span className="live-chip"><i /> LIVE SAFETY GUIDE</span></div><div className="resident-actions"><label className="language-select"><span>Language</span><select value={language} onChange={(event) => setLanguage(event.target.value)}><option>English</option><option>Swahili</option></select></label><button className="admin-link" onClick={() => router.push("/admin")}>Operator access</button></div></div><div className="resident-intro"><span className="eyebrow light-eyebrow">FOR PEOPLE IN THE AREA</span><h1>{copy.title}</h1><p>{copy.subtitle}</p><div className="resident-actions-row"><button className="location-button" onClick={shareLocation}>{location ? "✓ " : "◎ "}{location ? locationLabel : copy.share}</button><button className="route-button" onClick={findRoutes} disabled={loadingRoutes}>{loadingRoutes ? "Checking routes..." : copy.route} <span>→</span></button></div><small className="location-note">{location ? `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}` : "Your location stays on this device until you choose a route."}</small></div></section>
-      <section className="resident-content"><div className="resident-main-column"><div className={`safety-status ${hazards.length ? "has-hazard" : "clear"}`}><span className="status-pulse">{hazards.length ? "!" : "✓"}</span><div><span className="eyebrow">CURRENT AREA STATUS</span><h2>{hazards.length ? `${hazards.length} active hazard${hazards.length === 1 ? "" : "s"} nearby` : "No active hazards reported"}</h2><p>{hazards.length ? "Stay calm. Review the route options below and keep away from marked areas." : "We are monitoring the area for changes."}</p></div><span className="status-time">Updated now</span></div>{routeMessage && <p className="resident-message">{routeMessage}</p>}<div className="section-heading"><div><span className="eyebrow">YOUR OPTIONS</span><h2>{selectedRoute ? "Choose a route to help" : "Ready when you are"}</h2></div>{routes.length > 0 && <span className="route-count">{routes.length} options</span>}</div>{routes.length > 0 ? <div className="route-list">{routes.map((route, index) => <button className={`route-card ${selectedRoute?.shelter_id === route.shelter_id ? "chosen" : ""}`} key={route.shelter_id} onClick={() => setSelectedRoute(route)}><span className="route-number">{index + 1}</span><span className="route-card-content"><strong>{route.shelter_name}</strong><small>{formatDuration(route.duration_seconds)} · {formatDistance(route.distance_meters)} · {route.hazards.length ? `Avoids ${route.hazards.join(", ")}` : "No active hazards detected on route"}</small></span><span className="safety-score">{route.safety_score}<small>SAFETY</small></span></button>)}</div> : <div className="empty-routes"><span className="empty-icon">◎</span><strong>Share your location to see nearby routes</strong><p>We will compare open help points and explain the risks before you choose.</p><button className="text-action" onClick={shareLocation}>{copy.share} →</button></div>}<div className="risk-section"><div className="section-heading"><div><span className="eyebrow">WHAT THE RISK MEANS</span><h2>{copy.risks}</h2></div></div><div className="risk-grid"><div><span>01</span><strong>Hazard</strong><p>The dangerous event itself, such as flooding or fire.</p></div><div><span>02</span><strong>Exposure</strong><p>People, roads, and buildings that are in its path.</p></div><div><span>03</span><strong>Vulnerability</strong><p>How easily people may be harmed based on their situation.</p></div></div></div></div><aside className="resident-side"><div className="help-panel"><div className="section-heading"><div><span className="eyebrow">OPEN SUPPORT POINTS</span><h2>{copy.help}</h2></div><span className="help-icon">+</span></div>{shelters.length ? shelters.slice(0, 4).map((shelter) => <div className="help-item" key={shelter.id}><span className="help-pin">⌂</span><div><strong>{shelter.name}</strong><small>{shelter.capacity - shelter.current_occupancy > 0 ? `${shelter.capacity - shelter.current_occupancy} spaces available` : "Capacity may be full"}</small></div><span className="open-dot">OPEN</span></div>) : <p className="muted-copy">Help points will appear here when the response team publishes them.</p>}</div><div className="meet-panel"><span className="eyebrow">MEET ME IN THE MIDDLE</span><h2>Let help find you.</h2><p>Share your chosen route with a trusted person or rescue team when this connection is available.</p><button className="secondary-resident-button" onClick={() => setRouteMessage("Your selected help point is ready to share from this device.")} disabled={!selectedRoute}>Share my plan <span>↗</span></button></div><button className="calm-button" onClick={() => setChatOpen(!chatOpen)}><span>✦</span>{copy.calm}<b>→</b></button>{chatOpen && <div className="calm-panel"><strong>You are doing the right thing.</strong><p>Take one slow breath in for four counts and out for six. Move away from water, smoke, or unstable structures. Follow official instructions and call local emergency services if you are in immediate danger.</p><button onClick={() => setChatOpen(false)}>Close guide</button></div>}</aside></section><footer className="resident-footer"><span>SafePath AI · Guidance uses available local data.</span><span>In immediate danger, contact local emergency services.</span></footer>
-    </main>
-  );
 }
 
 function GoogleMapSurface({ onSelect, recenterPoint, recenterZoom, ready, mode, people, zones, zonePoints, finishZoneSignal, onPointSelect, onZonePoint, onZoneClose, onZoneDrawn }: { onSelect: (person: ApiPerson) => void; recenterPoint: LatLng | null; recenterZoom: number; ready: boolean; mode: EditMode; people: ApiPerson[]; zones: Zone[]; zonePoints: LatLng[]; finishZoneSignal: number; onPointSelect: (point: LatLng) => void; onZonePoint: (point: LatLng) => void; onZoneClose: (firstPoint?: LatLng) => void; onZoneDrawn: (coordinates: LatLng[], polygon: GooglePolygon) => void }) {
@@ -259,7 +177,7 @@ function GoogleMapSurface({ onSelect, recenterPoint, recenterZoom, ready, mode, 
   return apiKey ? <div className="google-map" ref={mapElement} /> : <div className="map-key-missing">Add <code>NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code> to load Google Maps.</div>;
 }
 
-export default function Home({ initialView = "resident" }: { initialView?: "resident" | "operator" }) {
+export default function AdminConsole() {
   const router = useRouter();
   const [stage, setStage] = useState<Stage>("standby");
   const [selected, setSelected] = useState<ApiPerson | null>(null);
@@ -358,10 +276,6 @@ export default function Home({ initialView = "resident" }: { initialView?: "resi
     }
     void loadMapData();
   }, [apiBaseUrl]);
-
-  if (initialView === "resident") {
-    return <ResidentExperience apiBaseUrl={apiBaseUrl} />;
-  }
 
   function startPerson() {
     setSaveError("");
@@ -507,4 +421,3 @@ export default function Home({ initialView = "resident" }: { initialView?: "resi
     </main>
   );
 }
-*/
