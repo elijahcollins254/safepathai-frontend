@@ -16,6 +16,68 @@
 .search-result { background: transparent; border: 0; border-top: 1px solid #dce5df; color: #40585a; cursor: pointer; display: block; padding: 9px 15px; text-align: left; width: 100%; }
 .search-result:hover { background: #e8f1eb; }
 .search-result strong, .search-result small { display: block; }.search-result strong { font-size: 11px; }.search-result small, .search-empty { color: #7a8d8d; font-size: 10px; }.search-empty { display: block; padding: 11px 15px; }
+
+@media (max-width: 760px) {
+  .resident-shell { overflow-x: hidden; }
+  .resident-nav { padding-bottom: 18px; }
+  .resident-brand { font-size: 16px; }
+  .live-chip { margin-left: 3px; }
+  .resident-actions { align-items: stretch; gap: 9px; justify-content: space-between; }
+  .language-select, .admin-link { min-height: 42px; }
+  .language-select { flex: 1; justify-content: space-between; }
+  .language-select select { font-size: 12px; }
+  .admin-link { padding: 9px 11px; }
+  .resident-intro { padding-top: 38px; }
+  .resident-intro h1 { font-size: clamp(43px, 13vw, 58px); max-width: 8ch; }
+  .resident-intro p { max-width: 34rem; }
+  .location-button, .route-button { align-items: center; display: flex; justify-content: space-between; min-height: 50px; width: 100%; }
+  .route-button span { margin-left: 12px; }
+  .resident-map-panel { border-radius: 0; margin: 0; }
+  .resident-map-heading { align-items: flex-start; gap: 12px; padding: 16px 18px; }
+  .resident-map-heading > span { line-height: 1.35; text-align: right; }
+  .resident-map-canvas, .resident-map-missing { height: min(58vh, 360px); min-height: 270px; }
+  .resident-content { padding-top: 28px; }
+  .safety-status { gap: 11px; padding: 15px; }
+  .safety-status h2 { font-size: 18px; line-height: 1.15; }
+  .safety-status p { font-size: 11px; }
+  .section-heading { align-items: flex-start; margin-top: 30px; }
+  .section-heading h2 { font-size: 19px; }
+  .route-card { gap: 10px; min-height: 78px; padding: 13px 12px; }
+  .route-card-content strong { font-size: 13px; }
+  .route-card-content small { font-size: 10px; line-height: 1.35; }
+  .safety-score { flex: 0 0 42px; text-align: right; }
+  .risk-section { margin-top: 36px; }
+  .help-panel, .meet-panel { padding: 17px; }
+  .help-item { min-height: 57px; }
+  .calm-button { min-height: 50px; }
+  .calm-panel { padding: 16px; }
+  .resident-footer { padding-bottom: 28px; padding-top: 20px; }
+}
+
+@media (max-width: 680px) {
+  .topbar { align-items: flex-start; gap: 12px; height: auto; min-height: 58px; padding: 12px 14px; }
+  .brand { font-size: 16px; }
+  .top-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .top-actions .operator { border-left: 0; padding-left: 0; }
+  .workspace { display: flex; flex-direction: column; height: auto; }
+  .sidebar { max-height: none; overflow: visible; padding: 18px 14px 16px; }
+  .nav-tabs { margin-bottom: 16px; }
+  .nav-tabs button { flex: 1; min-height: 42px; }
+  .stats-grid { margin-bottom: 18px; }
+  .severity-options button, .test-action, .primary-action, .secondary-action, .alert-action, .reset-action { min-height: 44px; }
+  .map-panel { height: min(72vh, 620px); min-height: 460px; }
+  .map-toolbar { align-items: stretch; flex-wrap: wrap; left: 12px; right: 12px; }
+  .search-form { flex-basis: calc(100% - 44px); width: auto; }
+  .map-toolbar > .map-button { min-height: 42px; }
+  .map-toolbar > .map-button:first-of-type { display: none; }
+  .map-edit-toolbar { flex-wrap: wrap; left: 12px; right: 12px; top: 72px; }
+  .map-edit-toolbar button { min-height: 40px; }
+  .map-form, .save-error, .person-card { left: 12px; right: 12px; top: 126px; width: auto; }
+  .map-key { bottom: 12px; left: 12px; }
+  .map-key span { font-size: 8px; }
+  .zoom-controls { bottom: 12px; right: 12px; }
+  .map-footer { min-height: 0; }
+}
 @import "tailwindcss";
 
 :root {
