@@ -249,7 +249,6 @@ function GoogleMapSurface({ onSelect, recenterPoint, recenterZoom, ready, mode, 
 
 export default function Home({ initialView = "resident" }: { initialView?: "resident" | "operator" }) {
   const router = useRouter();
-  const [viewMode, setViewMode] = useState<"resident" | "operator">(initialView);
   const [stage, setStage] = useState<Stage>("standby");
   const [selected, setSelected] = useState<ApiPerson | null>(null);
   const [panel, setPanel] = useState("overview");
@@ -286,10 +285,6 @@ export default function Home({ initialView = "resident" }: { initialView?: "resi
   const apiBaseUrl = normalizedApiBaseUrl.endsWith("/api")
     ? normalizedApiBaseUrl
     : `${normalizedApiBaseUrl}/api`;
-
-  if (viewMode === "resident") {
-    return <ResidentExperience apiBaseUrl={apiBaseUrl} />;
-  }
 
   const searchResults: SearchResult[] = (() => {
     const query = searchQuery.trim().toLowerCase();
@@ -351,6 +346,10 @@ export default function Home({ initialView = "resident" }: { initialView?: "resi
     }
     void loadMapData();
   }, [apiBaseUrl]);
+
+  if (initialView === "resident") {
+    return <ResidentExperience apiBaseUrl={apiBaseUrl} />;
+  }
 
   function startPerson() {
     setSaveError("");
