@@ -22,12 +22,15 @@ type GoogleMapsApi = {
     Circle: new (options: Record<string, unknown>) => GoogleOverlay;
     Polygon: new (options: Record<string, unknown>) => GoogleOverlay;
     Polyline: new (options: Record<string, unknown>) => GoogleOverlay;
+    Geocoder: new () => GoogleGeocoder;
   };
 };
-type GoogleMapInstance = { setCenter: (center: LatLng) => void; setZoom: (zoom: number) => void; addListener?: (event: string, callback: (event: { latLng?: { lat: () => number; lng: () => number } }) => void) => GoogleListener };
+type GoogleMapInstance = { setCenter: (center: LatLng) => void; setZoom: (zoom: number) => void; getStreetView: () => GoogleStreetView; addListener?: (event: string, callback: (event: { latLng?: { lat: () => number; lng: () => number } }) => void) => GoogleListener };
 type GoogleOverlay = { setMap: (map: GoogleMapInstance | null) => void };
 type GooglePolygon = GoogleOverlay & { getPath: () => { getArray: () => Array<{ lat: () => number; lng: () => number }> } };
 type GoogleListener = { remove: () => void };
+type GoogleStreetView = { setPosition: (position: LatLng) => void; setVisible: (visible: boolean) => void };
+type GoogleGeocoder = { geocode: (request: { address: string }, callback: (results: Array<{ geometry: { location: { lat: () => number; lng: () => number } } }>, status: string) => void) => void };
 
 const mapCenter: LatLng = { lat: 5, lng: 20 };
 const googleMapStyles = [
@@ -83,34 +86,73 @@ function formatDuration(seconds: number): string {
   return `${Math.max(1, Math.round(seconds / 60))} min`;
 }
 
-function ResidentMapSurface({ location, hazards, shelters, selectedRoute, ready }: { location: LatLng | null; hazards: Hazard[]; shelters: Shelter[]; selectedRoute: ResidentRoute | null; ready: boolean }) {
+function ResidentMapSurface({ location, hazards, shelters, selectedRoute, ready, searchRequest, searchQuery, zoomRequest, streetViewRequest, onSearchResult, onSearchError }: { location: LatLng | null; hazards: Hazard[]; shelters: Shelter[]; selectedRoute: ResidentRoute | null; ready: boolean; searchRequest: number; searchQuery: string; zoomRequest: number; streetViewRequest: number; onSearchResult: (point: LatLng) => void; onSearchError: (message: string) => void }) {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<GoogleMapInstance | null>(null);
   const overlays = useRef<GoogleOverlay[]>([]);
+  const lastSearchRequest = useRef(0);
+  const lastStreetViewRequest = useRef(0);
+  const lastZoomRequest = useRef(0);
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
+
   useEffect(() => {
     const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
-    if (!mapsApi || !mapElement.current) return;
+    if (!mapsApi || !mapElement.current || !ready) return;
     if (!mapInstance.current) mapInstance.current = new mapsApi.maps.Map(mapElement.current, { center: location || mapCenter, zoom: location ? 13 : 3, streetViewControl: false, mapTypeControl: false, fullscreenControl: false, styles: googleMapStyles });
     overlays.current.forEach((overlay) => overlay.setMap(null));
     const nextOverlays: GoogleOverlay[] = [];
     hazards.forEach((hazard) => {
-      nextOverlays.push(new mapsApi.maps.Circle({ map: mapInstance.current, center: { lat: hazard.latitude, lng: hazard.longitude }, radius: hazard.radius, fillColor: "#ed6b58", fillOpacity: 0.24, strokeColor: "#ed6b58", strokeOpacity: 0.9, strokeWeight: 2 }));
-      nextOverlays.push(new mapsApi.maps.Marker({ map: mapInstance.current, position: { lat: hazard.latitude, lng: hazard.longitude }, title: `${hazard.name} - ${hazard.severity}`, label: { text: "!", color: "#ffffff", fontWeight: "700" }, icon: { path: "M 0,0 m -13,0 a 13,13 0 1,0 26,0 a 13,13 0 1,0 -26,0", fillColor: "#ed6b58", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2, scale: 1 } }));
+      const position = { lat: hazard.latitude, lng: hazard.longitude };
+      nextOverlays.push(new mapsApi.maps.Circle({ map: mapInstance.current, center: position, radius: hazard.radius, fillColor: "#f05d5e", fillOpacity: 0.2, strokeColor: "#f05d5e", strokeOpacity: 0.85, strokeWeight: 2 }));
+      nextOverlays.push(new mapsApi.maps.Marker({ map: mapInstance.current, position, title: `${hazard.name} hazard`, label: { text: "!", color: "#ffffff", fontWeight: "700" }, icon: { path: "M 0,0 m -13,0 a 13,13 0 1,0 26,0 a 13,13 0 1,0 -26,0", fillColor: "#f05d5e", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2, scale: 1 } }));
     });
-    shelters.forEach((shelter) => nextOverlays.push(new mapsApi.maps.Marker({ map: mapInstance.current, position: { lat: shelter.latitude, lng: shelter.longitude }, title: shelter.name, label: { text: "H", color: "#24584b", fontWeight: "700" }, icon: { path: "M 0,0 m -12,0 a 12,12 0 1,0 24,0 a 12,12 0 1,0 -24,0", fillColor: "#dff3e5", fillOpacity: 1, strokeColor: "#57aa7d", strokeWeight: 2, scale: 1 } })));
-    if (location) nextOverlays.push(new mapsApi.maps.Marker({ map: mapInstance.current, position: location, title: "Your shared location", label: { text: "You", color: "#ffffff", fontWeight: "700" }, icon: { path: "M 0,0 m -9,0 a 9,9 0 1,0 18,0 a 9,9 0 1,0 -18,0", fillColor: "#328b78", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 3, scale: 1 } }));
-    const destination = selectedRoute && shelters.find((shelter) => shelter.id === selectedRoute.shelter_id);
-    if (location && destination) nextOverlays.push(new mapsApi.maps.Polyline({ map: mapInstance.current, path: [location, { lat: destination.latitude, lng: destination.longitude }], strokeColor: "#8ee1bc", strokeOpacity: 1, strokeWeight: 5 }));
+    shelters.forEach((shelter) => {
+      const selected = shelter.id === selectedRoute?.shelter_id;
+      nextOverlays.push(new mapsApi.maps.Marker({ map: mapInstance.current, position: { lat: shelter.latitude, lng: shelter.longitude }, title: shelter.name, label: { text: selected ? "✓" : "S", color: "#173c3d", fontWeight: "700" }, icon: { path: "M 0,0 m -12,0 a 12,12 0 1,0 24,0 a 12,12 0 1,0 -24,0", fillColor: selected ? "#a6f0bf" : "#eaf8ef", fillOpacity: 1, strokeColor: "#328464", strokeWeight: 2, scale: 1 } }));
+    });
+    if (location) {
+      nextOverlays.push(new mapsApi.maps.Marker({ map: mapInstance.current, position: location, title: "Your shared location", icon: { path: "M 0,0 m -8,0 a 8,8 0 1,0 16,0 a 8,8 0 1,0 -16,0", fillColor: "#4fd1c5", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 3, scale: 1 } }));
+      const selectedShelter = selectedRoute && shelters.find((shelter) => shelter.id === selectedRoute.shelter_id);
+      if (selectedShelter) nextOverlays.push(new mapsApi.maps.Polyline({ map: mapInstance.current, path: [location, { lat: selectedShelter.latitude, lng: selectedShelter.longitude }], strokeColor: "#a6f0bf", strokeOpacity: 0.95, strokeWeight: 5 }));
+    }
     overlays.current = nextOverlays;
-  }, [apiKey, ready, location, hazards, shelters, selectedRoute]);
+  }, [hazards, location, ready, selectedRoute, shelters]);
 
   useEffect(() => {
     if (location && mapInstance.current) {
       mapInstance.current.setCenter(location);
-      mapInstance.current.setZoom(13);
+      mapInstance.current.setZoom(14);
     }
   }, [location]);
+
+  useEffect(() => {
+    const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
+    if (!mapsApi || !mapInstance.current || searchRequest <= lastSearchRequest.current || !searchQuery.trim()) return;
+    lastSearchRequest.current = searchRequest;
+    new mapsApi.maps.Geocoder().geocode({ address: searchQuery }, (results, status) => {
+      if (status !== "OK" || !results[0]) {
+        onSearchError("That place could not be found.");
+        return;
+      }
+      const point = { lat: results[0].geometry.location.lat(), lng: results[0].geometry.location.lng() };
+      mapInstance.current?.setCenter(point);
+      mapInstance.current?.setZoom(15);
+      onSearchResult(point);
+    });
+  }, [onSearchError, onSearchResult, searchQuery, searchRequest]);
+
+  useEffect(() => {
+    if (!mapInstance.current || zoomRequest === lastZoomRequest.current) return;
+    lastZoomRequest.current = zoomRequest;
+    mapInstance.current.setZoom(Math.max(2, Math.min(20, 13 + zoomRequest)));
+  }, [zoomRequest]);
+
+  useEffect(() => {
+    if (!mapInstance.current || !location || streetViewRequest <= lastStreetViewRequest.current) return;
+    lastStreetViewRequest.current = streetViewRequest;
+    mapInstance.current.getStreetView().setPosition(location);
+    mapInstance.current.getStreetView().setVisible(true);
+  }, [location, streetViewRequest]);
 
   return apiKey ? <div className="resident-map-canvas" ref={mapElement} /> : <div className="resident-map-missing">Add <code>NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code> to view the live map.</div>;
 }
@@ -128,11 +170,10 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
   const [loadingRoutes, setLoadingRoutes] = useState(false);
   const [routeMessage, setRouteMessage] = useState("");
   const [mapsReady, setMapsReady] = useState(false);
-    useEffect(() => {
-      if (process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY) {
-      setMapsReady(true);
-      }
-    }, []);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchRequest, setSearchRequest] = useState(0);
+  const [zoomRequest, setZoomRequest] = useState(0);
+  const [streetViewRequest, setStreetViewRequest] = useState(0);
 
   useEffect(() => {
     async function loadPublicData() {
@@ -185,9 +226,8 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
 
   return (
     <main className="resident-shell">
-        {(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY) && <Script src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY}`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
-          <section className="resident-hero"><div className="resident-nav"><div className="resident-brand"><span className="resident-mark">+</span><strong>SafePath <b>AI</b></strong><span className="live-chip"><i /> LIVE SAFETY GUIDE</span></div><div className="resident-actions"><label className="language-select"><span>Language</span><select value={language} onChange={(event) => setLanguage(event.target.value)}><option>English</option><option>Swahili</option></select></label><button className="admin-link" onClick={() => router.push("/admin")}>Operator access</button></div></div><div className="resident-intro"><span className="eyebrow light-eyebrow">FOR PEOPLE IN THE AREA</span><h1>{copy.title}</h1><p>{copy.subtitle}</p><div className="resident-actions-row"><button className="location-button" onClick={shareLocation}>{location ? "✓ " : "◎ "}{location ? locationLabel : copy.share}</button><button className="route-button" onClick={findRoutes} disabled={loadingRoutes}>{loadingRoutes ? "Checking routes..." : copy.route} <span>→</span></button></div><small className="location-note">{location ? `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}` : "Your location stays on this device until you choose a route."}</small></div></section>
-          <div className="resident-map-panel"><div className="resident-map-heading"><button className="resident-map-menu" aria-label="Open map menu">☰</button><div><span className="eyebrow">LIVE SAFETY MAP</span><strong>{location ? "Your location and nearby risks" : "Share your location to focus the map"}</strong></div><button className="resident-map-search" aria-label="Search map">⌕</button></div><div className="resident-map-tools"><button aria-label="Show map layers">◇</button><button aria-label="Center on my location" onClick={shareLocation}>◎</button><button aria-label="Zoom in">+</button><button aria-label="Zoom out">−</button></div><ResidentMapSurface location={location} hazards={hazards} shelters={shelters} selectedRoute={selectedRoute} ready={mapsReady} /></div>
+      <div className="resident-map-panel"><form className="resident-map-searchbar" onSubmit={(event) => { event.preventDefault(); if (searchQuery.trim()) setSearchRequest((current) => current + 1); }}><button className="resident-map-menu" type="button" aria-label="Open map menu">☰</button><input aria-label="Search places, addresses, or businesses" placeholder="Search places, addresses, or businesses..." value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} /><button className="resident-map-search" type="submit" aria-label="Search map">⌕</button></form><div className="resident-map-tools"><button type="button" aria-label="Show map layers" title="Map layers">Layers</button><button type="button" aria-label="Center on my location" title="My location" onClick={shareLocation}>My location</button><button type="button" aria-label="Open Street View" title="Street view" onClick={() => location ? setStreetViewRequest((current) => current + 1) : setRouteMessage("Share your location first to open Street View.")}>Street view</button><button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => setZoomRequest((current) => current + 1)}>+</button><button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => setZoomRequest((current) => current - 1)}>−</button></div><ResidentMapSurface location={location} hazards={hazards} shelters={shelters} selectedRoute={selectedRoute} ready={mapsReady} searchRequest={searchRequest} searchQuery={searchQuery} zoomRequest={zoomRequest} streetViewRequest={streetViewRequest} onSearchResult={() => setRouteMessage("")} onSearchError={setRouteMessage} /></div>
+      <section className="resident-hero"><div className="resident-nav"><div className="resident-brand"><span className="resident-mark">+</span><strong>SafePath <b>AI</b></strong><span className="live-chip"><i /> LIVE SAFETY GUIDE</span></div><div className="resident-actions"><label className="language-select"><span>Language</span><select value={language} onChange={(event) => setLanguage(event.target.value)}><option>English</option><option>Swahili</option></select></label><button className="admin-link" onClick={() => router.push("/admin")}>Operator access</button></div></div><div className="resident-intro"><span className="eyebrow light-eyebrow">FOR PEOPLE IN THE AREA</span><h1>{copy.title}</h1><p>{copy.subtitle}</p><div className="resident-actions-row"><button className="location-button" onClick={shareLocation}>{location ? "✓ " : "◎ "}{location ? locationLabel : copy.share}</button><button className="route-button" onClick={findRoutes} disabled={loadingRoutes}>{loadingRoutes ? "Checking routes..." : copy.route} <span>→</span></button></div><small className="location-note">{location ? `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}` : "Your location stays on this device until you choose a route."}</small></div></section>
       <section className="resident-content"><div className="resident-main-column"><div className={`safety-status ${hazards.length ? "has-hazard" : "clear"}`}><span className="status-pulse">{hazards.length ? "!" : "✓"}</span><div><span className="eyebrow">CURRENT AREA STATUS</span><h2>{hazards.length ? `${hazards.length} active hazard${hazards.length === 1 ? "" : "s"} nearby` : "No active hazards reported"}</h2><p>{hazards.length ? "Stay calm. Review the route options below and keep away from marked areas." : "We are monitoring the area for changes."}</p></div><span className="status-time">Updated now</span></div>{routeMessage && <p className="resident-message">{routeMessage}</p>}<div className="section-heading"><div><span className="eyebrow">YOUR OPTIONS</span><h2>{selectedRoute ? "Choose a route to help" : "Ready when you are"}</h2></div>{routes.length > 0 && <span className="route-count">{routes.length} options</span>}</div>{routes.length > 0 ? <div className="route-list">{routes.map((route, index) => <button className={`route-card ${selectedRoute?.shelter_id === route.shelter_id ? "chosen" : ""}`} key={route.shelter_id} onClick={() => setSelectedRoute(route)}><span className="route-number">{index + 1}</span><span className="route-card-content"><strong>{route.shelter_name}</strong><small>{formatDuration(route.duration_seconds)} · {formatDistance(route.distance_meters)} · {route.hazards.length ? `Avoids ${route.hazards.join(", ")}` : "No active hazards detected on route"}</small></span><span className="safety-score">{route.safety_score}<small>SAFETY</small></span></button>)}</div> : <div className="empty-routes"><span className="empty-icon">◎</span><strong>Share your location to see nearby routes</strong><p>We will compare open help points and explain the risks before you choose.</p><button className="text-action" onClick={shareLocation}>{copy.share} →</button></div>}<div className="risk-section"><div className="section-heading"><div><span className="eyebrow">WHAT THE RISK MEANS</span><h2>{copy.risks}</h2></div></div><div className="risk-grid"><div><span>01</span><strong>Hazard</strong><p>The dangerous event itself, such as flooding or fire.</p></div><div><span>02</span><strong>Exposure</strong><p>People, roads, and buildings that are in its path.</p></div><div><span>03</span><strong>Vulnerability</strong><p>How easily people may be harmed based on their situation.</p></div></div></div></div><aside className="resident-side"><div className="help-panel"><div className="section-heading"><div><span className="eyebrow">OPEN SUPPORT POINTS</span><h2>{copy.help}</h2></div><span className="help-icon">+</span></div>{shelters.length ? shelters.slice(0, 4).map((shelter) => <div className="help-item" key={shelter.id}><span className="help-pin">⌂</span><div><strong>{shelter.name}</strong><small>{shelter.capacity - shelter.current_occupancy > 0 ? `${shelter.capacity - shelter.current_occupancy} spaces available` : "Capacity may be full"}</small></div><span className="open-dot">OPEN</span></div>) : <p className="muted-copy">Help points will appear here when the response team publishes them.</p>}</div><div className="meet-panel"><span className="eyebrow">MEET ME IN THE MIDDLE</span><h2>Let help find you.</h2><p>Share your chosen route with a trusted person or rescue team when this connection is available.</p><button className="secondary-resident-button" onClick={() => setRouteMessage("Your selected help point is ready to share from this device.")} disabled={!selectedRoute}>Share my plan <span>↗</span></button></div><button className="calm-button" onClick={() => setChatOpen(!chatOpen)}><span>✦</span>{copy.calm}<b>→</b></button>{chatOpen && <div className="calm-panel"><strong>You are doing the right thing.</strong><p>Take one slow breath in for four counts and out for six. Move away from water, smoke, or unstable structures. Follow official instructions and call local emergency services if you are in immediate danger.</p><button onClick={() => setChatOpen(false)}>Close guide</button></div>}</aside></section><footer className="resident-footer"><span>SafePath AI · Guidance uses available local data.</span><span>In immediate danger, contact local emergency services.</span></footer>
     </main>
   );
