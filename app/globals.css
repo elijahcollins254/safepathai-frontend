@@ -78,6 +78,44 @@
   .zoom-controls { bottom: 12px; right: 12px; }
   .map-footer { min-height: 0; }
 }
+
+@media (max-width: 760px) {
+  .resident-shell { background: #26343b; min-height: 100svh; }
+  .resident-hero { background: transparent; min-height: 0; overflow: visible; pointer-events: none; position: relative; z-index: 4; }
+  .resident-hero::after { display: none; }
+  .resident-nav { display: none; }
+  .resident-brand { background: rgba(246, 248, 243, .93); border-radius: 28px; box-shadow: 0 5px 18px rgba(11, 30, 31, .18); color: #294446; flex: 1; min-height: 50px; padding: 8px 13px; }
+  .resident-brand .resident-mark { height: 28px; width: 28px; }
+  .live-chip { color: #328b78; font-size: 8px; margin-left: auto; white-space: nowrap; }
+  .live-chip i { background: #ed6b58; }
+  .resident-actions { display: none; }
+  .resident-intro { display: none; }
+  .resident-map-panel { border-radius: 0; inset: 0; margin: 0; max-width: none; position: fixed; z-index: 1; }
+  .resident-map-heading { background: rgba(246, 248, 243, .93); border-radius: 28px; box-shadow: 0 5px 18px rgba(11, 30, 31, .18); color: #294446; gap: 8px; left: 0; padding: 0 13px; position: absolute; right: 0; top: max(16px, env(safe-area-inset-top)); z-index: 3; }
+  .resident-map-heading .eyebrow { display: none; }
+  .resident-map-heading strong { font-size: 12px; font-weight: 500; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .resident-map-heading > span { display: none; }
+  .resident-map-menu, .resident-map-search { background: transparent; border: 0; color: #667575; font-size: 20px; height: 50px; padding: 0; width: 31px; }
+  .resident-map-menu { font-size: 16px; }
+  .resident-map-search { font-size: 23px; }
+  .resident-map-tools { display: grid; gap: 10px; position: absolute; right: 18px; top: 88px; z-index: 3; }
+  .resident-map-tools button { background: rgba(246, 248, 243, .94); border: 0; border-radius: 50%; box-shadow: 0 4px 13px rgba(11, 30, 31, .16); color: #637374; font-size: 20px; height: 42px; padding: 0; width: 42px; }
+  .resident-map-tools button:nth-child(3), .resident-map-tools button:nth-child(4) { border-radius: 7px; font-size: 22px; height: 34px; }
+  .resident-map-canvas, .resident-map-missing { height: 100svh; min-height: 0; }
+  .resident-content { background: transparent; bottom: 0; display: block; left: 0; max-height: 45svh; overflow: hidden auto; padding: 0 14px max(18px, env(safe-area-inset-bottom)); pointer-events: none; position: fixed; right: 0; z-index: 5; }
+  .resident-main-column { background: rgba(255, 253, 247, .97); border-radius: 22px 22px 0 0; box-shadow: 0 -8px 28px rgba(11, 30, 31, .16); padding: 14px 14px 18px; pointer-events: auto; }
+  .resident-main-column::before { background: #b8c3bd; border-radius: 3px; content: ""; display: block; height: 4px; margin: 0 auto 13px; width: 38px; }
+  .safety-status { background: transparent !important; border: 0 !important; padding: 0 0 10px; }
+  .safety-status h2 { font-size: 17px; }
+  .safety-status p { color: #6f7d78; }
+  .resident-message { font-size: 11px; margin: 4px 0 10px; }
+  .section-heading { margin: 14px 0 10px; }
+  .section-heading h2 { font-size: 17px; }
+  .route-card { background: #f5f5ed; min-height: 66px; }
+  .route-card-content small { max-height: 29px; overflow: hidden; }
+  .risk-section { margin-top: 18px; }
+  .resident-side, .resident-footer { display: none; }
+}
 @import "tailwindcss";
 
 :root {
