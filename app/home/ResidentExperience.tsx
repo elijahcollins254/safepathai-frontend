@@ -55,7 +55,7 @@ function getLocationStatus(location: LatLng, zones: Zone[]): LocationStatus {
 	return "safe";
 }
 
-function ResidentMap({ people, zones, center, zoom, userLocation, streetViewRequest, ready, onSelect }: { people: Person[]; zones: Zone[]; center: LatLng | null; zoom: number; userLocation: LatLng | null; streetViewRequest: number; ready: boolean; onSelect: (person: Person) => void }) {
+function ResidentMap({ people, zones, center, zoom, userLocation, streetViewOpen, ready, onSelect }: { people: Person[]; zones: Zone[]; center: LatLng | null; zoom: number; userLocation: LatLng | null; streetViewOpen: boolean; ready: boolean; onSelect: (person: Person) => void }) {
 	const mapElement = useRef<HTMLDivElement>(null);
 	const mapInstance = useRef<GoogleMap | null>(null);
 	const overlays = useRef<GoogleOverlay[]>([]);
@@ -92,14 +92,18 @@ function ResidentMap({ people, zones, center, zoom, userLocation, streetViewRequ
 	}, [center, zoom]);
 
 	useEffect(() => {
-		if (streetViewRequest === 0 || !mapInstance.current) return;
+		if (!mapInstance.current) return;
 		const streetView = mapInstance.current.getStreetView?.();
 		if (!streetView) return;
+		if (!streetViewOpen) {
+			streetView.setVisible(false);
+			return;
+		}
 		const currentCenter = mapInstance.current.getCenter?.();
 		const position = userLocation || (currentCenter ? { lat: currentCenter.lat(), lng: currentCenter.lng() } : mapCenter);
 		streetView.setPosition(position);
 		streetView.setVisible(true);
-	}, [streetViewRequest, userLocation]);
+	}, [streetViewOpen, userLocation]);
 
 	return apiKey ? <div className="resident-map-canvas" ref={mapElement} /> : <div className="resident-map-missing">Add <code>NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code> to load Google Maps.</div>;
 }
@@ -116,7 +120,7 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
 	const [userLocation, setUserLocation] = useState<LatLng | null>(null);
 	const [locationPromptOpen, setLocationPromptOpen] = useState(true);
 	const [locationMessage, setLocationMessage] = useState("");
-	const [streetViewRequest, setStreetViewRequest] = useState(0);
+	const [streetViewOpen, setStreetViewOpen] = useState(false);
 	const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
 
 	useEffect(() => {
@@ -195,14 +199,14 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
 		<main className="resident-shell">
 			{apiKey && <Script src={`https://maps.googleapis.com/maps/api/js?key=${apiKey}`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
 			<div className="resident-map-panel">
-				<ResidentMap people={people} zones={zones} center={recenterPoint} zoom={recenterZoom} userLocation={userLocation} streetViewRequest={streetViewRequest} ready={mapsReady} onSelect={setSelected} />
+				<ResidentMap people={people} zones={zones} center={recenterPoint} zoom={recenterZoom} userLocation={userLocation} streetViewOpen={streetViewOpen} ready={mapsReady} onSelect={setSelected} />
 				<form className="resident-map-searchbar" onSubmit={submitSearch}>
 					<button className="resident-map-menu" type="button" aria-label="Map menu">☰</button>
 					<input aria-label="Search people, places, or coordinates" placeholder="Search people, places, or coordinates" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} />
 					<button className="resident-map-search" type="submit" aria-label="Search">⌕</button>
 					{searchOpen && searchQuery.trim() && <div className="search-results">{searchResults.length ? searchResults.map((result) => <button type="button" className="search-result" key={result.id} onClick={() => selectSearchResult(result)}><strong>{result.label}</strong><small>{result.detail}</small></button>) : <span className="search-empty">No matching map data</span>}</div>}
 				</form>
-				<div className="resident-map-tools"><button type="button">Layers</button><button type="button" aria-label="My location">◎</button><button type="button" aria-label="Open Street View" onClick={() => setStreetViewRequest((current) => current + 1)}>Street View</button><button type="button" aria-label="Zoom in" onClick={() => setRecenterZoom((current) => Math.min(20, current + 1))}>+</button><button type="button" aria-label="Zoom out" onClick={() => setRecenterZoom((current) => Math.max(1, current - 1))}>−</button></div>
+				<div className="resident-map-tools"><button type="button">Layers</button><button type="button" aria-label="My location">◎</button><button type="button" aria-label={streetViewOpen ? "Exit Street View" : "Open Street View"} onClick={() => setStreetViewOpen((current) => !current)}>{streetViewOpen ? "Exit Street View" : "Street View"}</button><button type="button" aria-label="Zoom in" onClick={() => setRecenterZoom((current) => Math.min(20, current + 1))}>+</button><button type="button" aria-label="Zoom out" onClick={() => setRecenterZoom((current) => Math.max(1, current - 1))}>−</button></div>
 				{selected && <div className="person-card"><button className="close-card" onClick={() => setSelected(null)} aria-label="Close profile">×</button><span className="eyebrow">PERSON PROFILE</span><h2>{selected.name}</h2><p>{selected.phone || "No phone number"}</p><div className="card-status"><i className={selected.status === "at_risk" ? "key-risk" : "key-safe"} /> {selected.status === "at_risk" ? "AT RISK" : "SAFE"}</div></div>}
 			</div>
 			{locationPromptOpen && <div className="resident-dialog-backdrop"><section className="resident-dialog" role="dialog" aria-modal="true" aria-labelledby="location-dialog-title"><span className="resident-dialog-icon">⌖</span>{locationStatus ? <><h2 id="location-dialog-title">{locationStatusCopy[locationStatus].title}</h2><p>{locationStatusCopy[locationStatus].detail}</p></> : <><h2 id="location-dialog-title">Share your location</h2><p>Allow SafePath to find your area and check whether you are in a safe, at-risk, or hazard zone.</p></>}{locationMessage && <p className="alert-error">{locationMessage}</p>}<div className="resident-dialog-actions"><button className="resident-dialog-primary" type="button" onClick={locationStatus ? () => setLocationPromptOpen(false) : requestLocation}>{locationStatus ? "Continue" : locationMessage ? "Try again" : "Share location"}</button><button className="resident-dialog-secondary" type="button" onClick={() => setLocationPromptOpen(false)}>{locationStatus ? "Check again later" : "Not now"}</button></div></section></div>}
