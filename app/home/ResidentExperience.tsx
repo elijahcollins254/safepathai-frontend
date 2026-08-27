@@ -7,6 +7,7 @@ type LatLng = { lat: number; lng: number };
 type Person = { id: number; name: string; phone: string; details: string; latitude: number; longitude: number; status: "safe" | "at_risk" };
 type Zone = { id: number; name: string; zone_type: "safe" | "at_risk" | "hazard"; details: string; coordinates: LatLng[] };
 type SearchResult = { id: string; label: string; detail: string; position: LatLng; person?: Person };
+type LocationStatus = "safe" | "at_risk" | "hazard";
 type GoogleMapsApi = { maps: { Map: new (element: HTMLElement, options: Record<string, unknown>) => GoogleMap; Marker: new (options: Record<string, unknown>) => GoogleOverlay; Polygon: new (options: Record<string, unknown>) => GoogleOverlay } };
 type GoogleMap = { setCenter: (center: LatLng) => void; setZoom: (zoom: number) => void };
 type GoogleOverlay = { setMap: (map: GoogleMap | null) => void; addListener?: (event: string, callback: () => void) => void };
@@ -47,7 +48,14 @@ function zoomForPerson(person: Person, zones: Zone[]): number {
 	return containingZone ? zoomForZone(containingZone.coordinates) : 14;
 }
 
-function ResidentMap({ people, zones, center, zoom, ready, onSelect }: { people: Person[]; zones: Zone[]; center: LatLng | null; zoom: number; ready: boolean; onSelect: (person: Person) => void }) {
+function getLocationStatus(location: LatLng, zones: Zone[]): LocationStatus {
+	const containingZones = zones.filter((zone) => pointInPolygon(location, zone.coordinates));
+	if (containingZones.some((zone) => zone.zone_type === "hazard")) return "hazard";
+	if (containingZones.some((zone) => zone.zone_type === "at_risk")) return "at_risk";
+	return "safe";
+}
+
+function ResidentMap({ people, zones, center, zoom, userLocation, ready, onSelect }: { people: Person[]; zones: Zone[]; center: LatLng | null; zoom: number; userLocation: LatLng | null; ready: boolean; onSelect: (person: Person) => void }) {
 	const mapElement = useRef<HTMLDivElement>(null);
 	const mapInstance = useRef<GoogleMap | null>(null);
 	const overlays = useRef<GoogleOverlay[]>([]);
@@ -70,8 +78,11 @@ function ResidentMap({ people, zones, center, zoom, ready, onSelect }: { people:
 			const colors = { safe: "#72d6a3", at_risk: "#f2a65a", hazard: "#f05d5e" };
 			nextOverlays.push(new mapsApi.maps.Polygon({ map: mapInstance.current, paths: zone.coordinates, fillColor: colors[zone.zone_type], fillOpacity: 0.24, strokeColor: colors[zone.zone_type], strokeWeight: 2 }));
 		});
+		if (userLocation) {
+			nextOverlays.push(new mapsApi.maps.Marker({ map: mapInstance.current, position: userLocation, title: "Your location", icon: { path: "M 0,0 m -7,0 a 7,7 0 1,0 14,0 a 7,7 0 1,0 -14,0", fillColor: "#4285f4", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2, scale: 1 } }));
+		}
 		overlays.current = nextOverlays;
-	}, [onSelect, people, zones, ready]);
+	}, [onSelect, people, zones, userLocation, ready]);
 
 	useEffect(() => {
 		if (center && mapInstance.current) {
@@ -92,6 +103,9 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
 	const [searchOpen, setSearchOpen] = useState(false);
 	const [recenterPoint, setRecenterPoint] = useState<LatLng | null>(null);
 	const [recenterZoom, setRecenterZoom] = useState(12);
+	const [userLocation, setUserLocation] = useState<LatLng | null>(null);
+	const [locationPromptOpen, setLocationPromptOpen] = useState(true);
+	const [locationMessage, setLocationMessage] = useState("");
 	const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
 
 	useEffect(() => {
@@ -105,6 +119,34 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
 		}
 		void loadMapData();
 	}, [apiBaseUrl]);
+
+	function requestLocation() {
+		if (!navigator.geolocation) {
+			setLocationMessage("Location sharing is not available in this browser.");
+			return;
+		}
+		setLocationMessage("");
+		navigator.geolocation.getCurrentPosition(
+			(position) => {
+				const location = { lat: position.coords.latitude, lng: position.coords.longitude };
+				setUserLocation(location);
+				setRecenterPoint(location);
+				setRecenterZoom(14);
+				setLocationPromptOpen(true);
+			},
+			(error) => {
+				setLocationMessage(error.code === error.PERMISSION_DENIED ? "Location access was denied. You can allow it in your browser settings." : "We could not determine your location. Please try again.");
+			},
+			{ enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 },
+		);
+	}
+
+	const locationStatus = userLocation ? getLocationStatus(userLocation, zones) : null;
+	const locationStatusCopy = {
+		safe: { title: "You are in a safe zone", detail: "No active hazards are reported in your current area.", icon: "✓" },
+		at_risk: { title: "You are in an at-risk zone", detail: "Stay alert and review the recommended safe routes.", icon: "!" },
+		hazard: { title: "You are in a hazard zone", detail: "Move away from this area and follow local emergency guidance.", icon: "!" },
+	};
 
 	const searchResults: SearchResult[] = (() => {
 		const query = searchQuery.trim().toLowerCase();
@@ -142,7 +184,7 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
 		<main className="resident-shell">
 			{apiKey && <Script src={`https://maps.googleapis.com/maps/api/js?key=${apiKey}`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
 			<div className="resident-map-panel">
-				<ResidentMap people={people} zones={zones} center={recenterPoint} zoom={recenterZoom} ready={mapsReady} onSelect={setSelected} />
+				<ResidentMap people={people} zones={zones} center={recenterPoint} zoom={recenterZoom} userLocation={userLocation} ready={mapsReady} onSelect={setSelected} />
 				<form className="resident-map-searchbar" onSubmit={submitSearch}>
 					<button className="resident-map-menu" type="button" aria-label="Map menu">☰</button>
 					<input aria-label="Search people, places, or coordinates" placeholder="Search people, places, or coordinates" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} />
@@ -152,6 +194,8 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
 				<div className="resident-map-tools"><button type="button">Layers</button><button type="button" aria-label="My location">◎</button><button type="button" aria-label="Zoom in" onClick={() => setRecenterZoom((current) => Math.min(20, current + 1))}>+</button><button type="button" aria-label="Zoom out" onClick={() => setRecenterZoom((current) => Math.max(1, current - 1))}>−</button></div>
 				{selected && <div className="person-card"><button className="close-card" onClick={() => setSelected(null)} aria-label="Close profile">×</button><span className="eyebrow">PERSON PROFILE</span><h2>{selected.name}</h2><p>{selected.phone || "No phone number"}</p><div className="card-status"><i className={selected.status === "at_risk" ? "key-risk" : "key-safe"} /> {selected.status === "at_risk" ? "AT RISK" : "SAFE"}</div></div>}
 			</div>
+			{locationPromptOpen && <div className="resident-dialog-backdrop"><section className="resident-dialog" role="dialog" aria-modal="true" aria-labelledby="location-dialog-title"><span className="resident-dialog-icon">⌖</span>{locationStatus ? <><h2 id="location-dialog-title">{locationStatusCopy[locationStatus].title}</h2><p>{locationStatusCopy[locationStatus].detail}</p></> : <><h2 id="location-dialog-title">Share your location</h2><p>Allow SafePath to find your area and check whether you are in a safe, at-risk, or hazard zone.</p></>}{locationMessage && <p className="alert-error">{locationMessage}</p>}<div className="resident-dialog-actions"><button className="resident-dialog-primary" type="button" onClick={locationStatus ? () => setLocationPromptOpen(false) : requestLocation}>{locationStatus ? "Continue" : locationMessage ? "Try again" : "Share location"}</button><button className="resident-dialog-secondary" type="button" onClick={() => setLocationPromptOpen(false)}>{locationStatus ? "Check again later" : "Not now"}</button></div></section></div>}
+			{locationStatus && !locationPromptOpen && <button className="resident-profile-trigger" type="button" onClick={() => setLocationPromptOpen(true)}>{locationStatusCopy[locationStatus].icon} {locationStatusCopy[locationStatus].title}</button>}
 		</main>
 	);
 }
