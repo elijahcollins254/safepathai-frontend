@@ -98,7 +98,7 @@ function GoogleMapSurface({ onSelect, recenterPoint, recenterZoom, ready, mode, 
       mapInstance.current = new mapsApi.maps.Map(mapElement.current, {
         center: mapCenter,
         zoom: 3,
-        streetViewControl: false,
+        streetViewControl: true,
         mapTypeControl: false,
         fullscreenControl: false,
         styles: googleMapStyles,

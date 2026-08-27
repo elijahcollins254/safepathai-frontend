@@ -65,7 +65,7 @@ function ResidentMap({ people, zones, center, zoom, userLocation, ready, onSelec
 		const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
 		if (!mapsApi || !mapElement.current) return;
 		if (!mapInstance.current) {
-			mapInstance.current = new mapsApi.maps.Map(mapElement.current, { center: mapCenter, zoom: 3, streetViewControl: false, mapTypeControl: false, fullscreenControl: false, styles: googleMapStyles });
+			mapInstance.current = new mapsApi.maps.Map(mapElement.current, { center: mapCenter, zoom: 3, streetViewControl: true, mapTypeControl: false, fullscreenControl: false, styles: googleMapStyles });
 		}
 		overlays.current.forEach((overlay) => overlay.setMap(null));
 		const nextOverlays: GoogleOverlay[] = [];
