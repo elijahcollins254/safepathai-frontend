@@ -9,9 +9,9 @@ type Zone = { id: number; name: string; zone_type: "safe" | "at_risk" | "hazard"
 type ResidentRoute = { distance_meters: number; duration_seconds: number; polyline: string; destination: { latitude: number; longitude: number } };
 type SearchResult = { id: string; label: string; detail: string; position: LatLng; person?: Person };
 type LocationStatus = "safe" | "at_risk" | "hazard";
-type GoogleMapsApi = { maps: { Map: new (element: HTMLElement, options: Record<string, unknown>) => GoogleMap; Marker: new (options: Record<string, unknown>) => GoogleOverlay; Polygon: new (options: Record<string, unknown>) => GoogleOverlay; Polyline: new (options: Record<string, unknown>) => GoogleOverlay } };
+type GoogleMapsApi = { maps: { Map: new (element: HTMLElement, options: Record<string, unknown>) => GoogleMap; marker: { AdvancedMarkerElement: new (options: Record<string, unknown>) => GoogleOverlay }; Polygon: new (options: Record<string, unknown>) => GoogleOverlay; Polyline: new (options: Record<string, unknown>) => GoogleOverlay } };
 type GoogleMap = { setCenter: (center: LatLng) => void; setZoom: (zoom: number) => void; getCenter?: () => { lat: () => number; lng: () => number } | undefined; getStreetView?: () => { setPosition: (position: LatLng) => void; setVisible: (visible: boolean) => void } };
-type GoogleOverlay = { setMap: (map: GoogleMap | null) => void; addListener?: (event: string, callback: () => void) => void };
+type GoogleOverlay = { setMap?: (map: GoogleMap | null) => void; map?: GoogleMap | null; addListener?: (event: string, callback: () => void) => void };
 
 const mapCenter: LatLng = { lat: 5, lng: 20 };
 const googleMapStyles = [
@@ -90,6 +90,17 @@ function formatRouteDuration(seconds: number): string {
 	return `${Math.max(1, Math.round(seconds / 60))} min`;
 }
 
+function markerContent(color: string, size = 14): HTMLDivElement {
+	const element = document.createElement("div");
+	element.style.background = color;
+	element.style.border = "2px solid #ffffff";
+	element.style.borderRadius = "50%";
+	element.style.boxShadow = "0 1px 4px rgba(0, 0, 0, .35)";
+	element.style.height = `${size}px`;
+	element.style.width = `${size}px`;
+	return element;
+}
+
 function ResidentMap({ people, zones, center, zoom, userLocation, route, streetViewOpen, ready, onSelect }: { people: Person[]; zones: Zone[]; center: LatLng | null; zoom: number; userLocation: LatLng | null; route: ResidentRoute | null; streetViewOpen: boolean; ready: boolean; onSelect: (person: Person) => void }) {
 	const mapElement = useRef<HTMLDivElement>(null);
 	const mapInstance = useRef<GoogleMap | null>(null);
@@ -100,12 +111,15 @@ function ResidentMap({ people, zones, center, zoom, userLocation, route, streetV
 		const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
 		if (!mapsApi || !mapElement.current) return;
 		if (!mapInstance.current) {
-			mapInstance.current = new mapsApi.maps.Map(mapElement.current, { center: mapCenter, zoom: 3, streetViewControl: true, mapTypeControl: false, fullscreenControl: false, styles: googleMapStyles });
+			mapInstance.current = new mapsApi.maps.Map(mapElement.current, { center: mapCenter, zoom: 3, streetViewControl: true, mapTypeControl: false, fullscreenControl: false, mapId: process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID || "DEMO_MAP_ID", styles: googleMapStyles });
 		}
-		overlays.current.forEach((overlay) => overlay.setMap(null));
+		overlays.current.forEach((overlay) => {
+			if (overlay.setMap) overlay.setMap(null);
+			else overlay.map = null;
+		});
 		const nextOverlays: GoogleOverlay[] = [];
 		people.forEach((person) => {
-			const marker = new mapsApi.maps.Marker({ map: mapInstance.current, position: { lat: person.latitude, lng: person.longitude }, title: person.name, icon: { path: "M 0,0 m -6,0 a 6,6 0 1,0 12,0 a 6,6 0 1,0 -12,0", fillColor: person.status === "at_risk" ? "#f05d5e" : "#72d6a3", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 1.5, scale: 1 } });
+			const marker = new mapsApi.maps.marker.AdvancedMarkerElement({ map: mapInstance.current, position: { lat: person.latitude, lng: person.longitude }, title: person.name, content: markerContent(person.status === "at_risk" ? "#f05d5e" : "#72d6a3") });
 			marker.addListener?.("click", () => onSelect(person));
 			nextOverlays.push(marker);
 		});
@@ -114,7 +128,7 @@ function ResidentMap({ people, zones, center, zoom, userLocation, route, streetV
 			nextOverlays.push(new mapsApi.maps.Polygon({ map: mapInstance.current, paths: zone.coordinates, fillColor: colors[zone.zone_type], fillOpacity: 0.24, strokeColor: colors[zone.zone_type], strokeWeight: 2 }));
 		});
 		if (userLocation) {
-			nextOverlays.push(new mapsApi.maps.Marker({ map: mapInstance.current, position: userLocation, title: "Your location", icon: { path: "M 0,0 m -7,0 a 7,7 0 1,0 14,0 a 7,7 0 1,0 -14,0", fillColor: "#4285f4", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2, scale: 1 } }));
+			nextOverlays.push(new mapsApi.maps.marker.AdvancedMarkerElement({ map: mapInstance.current, position: userLocation, title: "Your location", content: markerContent("#4285f4", 16) }));
 		}
 		if (route && userLocation) {
 			const path = route.polyline ? decodePolyline(route.polyline) : [userLocation];
@@ -273,7 +287,7 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
 
 	return (
 		<main className="resident-shell">
-			{apiKey && <Script src={`https://maps.googleapis.com/maps/api/js?key=${apiKey}`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
+			{apiKey && <Script src={`https://maps.googleapis.com/maps/api/js?key=${apiKey}&loading=async&libraries=marker`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
 			<div className="resident-map-panel">
 				<ResidentMap people={people} zones={zones} center={recenterPoint} zoom={recenterZoom} userLocation={userLocation} route={recommendedRoute} streetViewOpen={streetViewOpen} ready={mapsReady} onSelect={setSelected} />
 				<form className="resident-map-searchbar" onSubmit={submitSearch}>
