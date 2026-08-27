@@ -65,7 +65,7 @@
 .resident-dialog-primary { background: #ed6b58; border: 1px solid #ed6b58; color: white; }
 .resident-dialog-secondary { background: transparent; border: 1px solid #d5ded5; color: #526a65; }
 .resident-profile-trigger { background: rgba(246, 248, 243, .96); border: 0; border-radius: 22px; box-shadow: 0 5px 18px rgba(11, 30, 31, .18); color: #294446; font-size: 11px; font-weight: 750; min-height: 40px; padding: 0 16px; position: fixed; right: 24px; top: 22px; z-index: 4; }
-.resident-route-card { background: #fffdf7; border: 1px solid #efb09a; border-left: 4px solid #ed6b58; border-radius: 8px; box-shadow: 0 12px 30px rgba(11, 30, 31, .2); color: #203638; padding: 15px 17px; position: absolute; right: 24px; top: 88px; width: min(280px, calc(100% - 48px)); z-index: 6; }.resident-route-card .eyebrow { color: #c55d4d; }.resident-route-card h2 { font-size: 17px; margin: 7px 0 4px; }.resident-route-card p { color: #647776; font-size: 11px; line-height: 1.45; margin: 0; }.resident-route-card strong { color: #365d53; display: block; font-size: 10px; line-height: 1.4; margin-top: 10px; }
+.resident-route-card { background: #fffdf7; border: 1px solid #efb09a; border-left: 4px solid #ed6b58; border-radius: 8px; box-shadow: 0 12px 30px rgba(11, 30, 31, .2); color: #203638; left: 24px; padding: 15px 17px; position: absolute; top: 130px; width: min(280px, calc(100% - 48px)); z-index: 6; }.resident-route-card .eyebrow { color: #c55d4d; }.resident-route-card h2 { font-size: 17px; margin: 7px 0 4px; }.resident-route-card p { color: #647776; font-size: 11px; line-height: 1.45; margin: 0; }.resident-route-card strong { color: #365d53; display: block; font-size: 10px; line-height: 1.4; margin-top: 10px; }
 
 .resident-map-panel { background: #26343b; inset: 0; margin: 0; max-width: none; position: fixed; z-index: 1; }
 .resident-map-searchbar { align-items: center; background: rgba(246, 248, 243, .96); border-radius: 30px; box-shadow: 0 5px 18px rgba(11, 30, 31, .18); display: flex; gap: 8px; left: 50%; max-width: 540px; padding: 4px 12px; position: absolute; top: 22px; transform: translateX(-50%); width: min(540px, calc(100% - 44px)); z-index: 3; }
@@ -85,7 +85,7 @@
   .resident-map-searchbar { top: max(16px, env(safe-area-inset-top)); width: calc(100% - 34px); }
   .resident-map-tools { right: 17px; top: 84px; }
   .resident-map-tools button { font-size: 10px; min-height: 38px; min-width: 88px; }
-  .resident-route-card { right: 12px; top: 75px; width: min(245px, calc(100% - 24px)); }
+  .resident-route-card { left: 12px; top: 190px; width: min(245px, calc(100% - 24px)); }
 }
 @import "tailwindcss";
 
