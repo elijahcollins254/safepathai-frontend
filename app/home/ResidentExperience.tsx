@@ -6,9 +6,10 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 type LatLng = { lat: number; lng: number };
 type Person = { id: number; name: string; phone: string; details: string; latitude: number; longitude: number; status: "safe" | "at_risk" };
 type Zone = { id: number; name: string; zone_type: "safe" | "at_risk" | "hazard"; details: string; coordinates: LatLng[] };
+type ResidentRoute = { shelter_name: string; distance_meters: number; duration_seconds: number; polyline: string; unsafe: boolean; hazards: string[] };
 type SearchResult = { id: string; label: string; detail: string; position: LatLng; person?: Person };
 type LocationStatus = "safe" | "at_risk" | "hazard";
-type GoogleMapsApi = { maps: { Map: new (element: HTMLElement, options: Record<string, unknown>) => GoogleMap; Marker: new (options: Record<string, unknown>) => GoogleOverlay; Polygon: new (options: Record<string, unknown>) => GoogleOverlay } };
+type GoogleMapsApi = { maps: { Map: new (element: HTMLElement, options: Record<string, unknown>) => GoogleMap; Marker: new (options: Record<string, unknown>) => GoogleOverlay; Polygon: new (options: Record<string, unknown>) => GoogleOverlay; Polyline: new (options: Record<string, unknown>) => GoogleOverlay } };
 type GoogleMap = { setCenter: (center: LatLng) => void; setZoom: (zoom: number) => void; getCenter?: () => { lat: () => number; lng: () => number } | undefined; getStreetView?: () => { setPosition: (position: LatLng) => void; setVisible: (visible: boolean) => void } };
 type GoogleOverlay = { setMap: (map: GoogleMap | null) => void; addListener?: (event: string, callback: () => void) => void };
 
@@ -55,7 +56,41 @@ function getLocationStatus(location: LatLng, zones: Zone[]): LocationStatus {
 	return "safe";
 }
 
-function ResidentMap({ people, zones, center, zoom, userLocation, streetViewOpen, ready, onSelect }: { people: Person[]; zones: Zone[]; center: LatLng | null; zoom: number; userLocation: LatLng | null; streetViewOpen: boolean; ready: boolean; onSelect: (person: Person) => void }) {
+function decodePolyline(encoded: string): LatLng[] {
+	const points: LatLng[] = [];
+	let index = 0;
+	let lat = 0;
+	let lng = 0;
+	while (index < encoded.length) {
+		const values: number[] = [];
+		for (let coordinate = 0; coordinate < 2; coordinate += 1) {
+			let result = 0;
+			let shift = 0;
+			let byte: number;
+			do {
+				byte = encoded.charCodeAt(index) - 63;
+				index += 1;
+				result |= (byte & 0x1f) << shift;
+				shift += 5;
+			} while (byte >= 0x20 && index < encoded.length);
+			values.push((result & 1) ? ~(result >> 1) : result >> 1);
+		}
+		lat += values[0];
+		lng += values[1];
+		points.push({ lat: lat / 100000, lng: lng / 100000 });
+	}
+	return points;
+}
+
+function formatRouteDistance(meters: number): string {
+	return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
+}
+
+function formatRouteDuration(seconds: number): string {
+	return `${Math.max(1, Math.round(seconds / 60))} min`;
+}
+
+function ResidentMap({ people, zones, center, zoom, userLocation, route, streetViewOpen, ready, onSelect }: { people: Person[]; zones: Zone[]; center: LatLng | null; zoom: number; userLocation: LatLng | null; route: ResidentRoute | null; streetViewOpen: boolean; ready: boolean; onSelect: (person: Person) => void }) {
 	const mapElement = useRef<HTMLDivElement>(null);
 	const mapInstance = useRef<GoogleMap | null>(null);
 	const overlays = useRef<GoogleOverlay[]>([]);
@@ -81,8 +116,12 @@ function ResidentMap({ people, zones, center, zoom, userLocation, streetViewOpen
 		if (userLocation) {
 			nextOverlays.push(new mapsApi.maps.Marker({ map: mapInstance.current, position: userLocation, title: "Your location", icon: { path: "M 0,0 m -7,0 a 7,7 0 1,0 14,0 a 7,7 0 1,0 -14,0", fillColor: "#4285f4", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2, scale: 1 } }));
 		}
+		if (route && userLocation) {
+			const path = route.polyline ? decodePolyline(route.polyline) : [userLocation];
+			if (path.length > 1) nextOverlays.push(new mapsApi.maps.Polyline({ map: mapInstance.current, path, strokeColor: "#4285f4", strokeOpacity: 0.95, strokeWeight: 5, zIndex: 2 }));
+		}
 		overlays.current = nextOverlays;
-	}, [onSelect, people, zones, userLocation, ready]);
+	}, [onSelect, people, zones, userLocation, route, ready]);
 
 	useEffect(() => {
 		if (center && mapInstance.current) {
@@ -121,6 +160,9 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
 	const [locationPromptOpen, setLocationPromptOpen] = useState(true);
 	const [locationMessage, setLocationMessage] = useState("");
 	const [streetViewOpen, setStreetViewOpen] = useState(false);
+	const [recommendedRoute, setRecommendedRoute] = useState<ResidentRoute | null>(null);
+	const [routeLoading, setRouteLoading] = useState(false);
+	const [routeMessage, setRouteMessage] = useState("");
 	const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
 
 	useEffect(() => {
@@ -148,6 +190,7 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
 				setRecenterPoint(location);
 				setRecenterZoom(14);
 				setLocationPromptOpen(true);
+				setRouteMessage("");
 			},
 			(error) => {
 				setLocationMessage(error.code === error.PERMISSION_DENIED ? "Location access was denied. You can allow it in your browser settings." : "We could not determine your location. Please try again.");
@@ -155,6 +198,31 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
 			{ enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 },
 		);
 	}
+
+	useEffect(() => {
+		if (!userLocation) return;
+		const location: LatLng = userLocation;
+		let cancelled = false;
+		async function loadRecommendedRoute() {
+			setRouteLoading(true);
+			setRouteMessage("");
+			try {
+				const response = await fetch(`${apiBaseUrl}/route/recommend/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ latitude: location.lat, longitude: location.lng }) });
+				const result = await response.json();
+				if (!response.ok) throw new Error(result.error || "Route could not be calculated");
+				if (!cancelled) {
+					setRecommendedRoute(result.recommended_route || null);
+					if (!result.recommended_route) setRouteMessage("No safe route is currently available.");
+				}
+			} catch {
+				if (!cancelled) setRouteMessage("We could not calculate a safe route. Please try again shortly.");
+			} finally {
+				if (!cancelled) setRouteLoading(false);
+			}
+		}
+		void loadRecommendedRoute();
+		return () => { cancelled = true; };
+	}, [apiBaseUrl, userLocation]);
 
 	const locationStatus = userLocation ? getLocationStatus(userLocation, zones) : null;
 	const locationStatusCopy = {
@@ -199,7 +267,7 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
 		<main className="resident-shell">
 			{apiKey && <Script src={`https://maps.googleapis.com/maps/api/js?key=${apiKey}`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
 			<div className="resident-map-panel">
-				<ResidentMap people={people} zones={zones} center={recenterPoint} zoom={recenterZoom} userLocation={userLocation} streetViewOpen={streetViewOpen} ready={mapsReady} onSelect={setSelected} />
+				<ResidentMap people={people} zones={zones} center={recenterPoint} zoom={recenterZoom} userLocation={userLocation} route={recommendedRoute} streetViewOpen={streetViewOpen} ready={mapsReady} onSelect={setSelected} />
 				<form className="resident-map-searchbar" onSubmit={submitSearch}>
 					<button className="resident-map-menu" type="button" aria-label="Map menu">☰</button>
 					<input aria-label="Search people, places, or coordinates" placeholder="Search people, places, or coordinates" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} />
@@ -208,6 +276,7 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
 				</form>
 				<div className="resident-map-tools"><button type="button">Layers</button><button type="button" aria-label="My location">◎</button><button type="button" aria-label={streetViewOpen ? "Exit Street View" : "Open Street View"} onClick={() => setStreetViewOpen((current) => !current)}>{streetViewOpen ? "Exit Street View" : "Street View"}</button><button type="button" aria-label="Zoom in" onClick={() => setRecenterZoom((current) => Math.min(20, current + 1))}>+</button><button type="button" aria-label="Zoom out" onClick={() => setRecenterZoom((current) => Math.max(1, current - 1))}>−</button></div>
 				{selected && <div className="person-card"><button className="close-card" onClick={() => setSelected(null)} aria-label="Close profile">×</button><span className="eyebrow">PERSON PROFILE</span><h2>{selected.name}</h2><p>{selected.phone || "No phone number"}</p><div className="card-status"><i className={selected.status === "at_risk" ? "key-risk" : "key-safe"} /> {selected.status === "at_risk" ? "AT RISK" : "SAFE"}</div></div>}
+				{locationStatus === "hazard" && (routeLoading || recommendedRoute || routeMessage) && <div className="resident-route-card"><span className="eyebrow">SAFEST WAY OUT</span>{routeLoading ? <p>Calculating the shortest safe route...</p> : recommendedRoute ? <><h2>{recommendedRoute.shelter_name}</h2><p>{formatRouteDistance(recommendedRoute.distance_meters)} · {formatRouteDuration(recommendedRoute.duration_seconds)}</p><strong>Follow the blue route to leave the hazard zone.</strong></> : <p>{routeMessage}</p>}</div>}
 			</div>
 			{locationPromptOpen && <div className="resident-dialog-backdrop"><section className="resident-dialog" role="dialog" aria-modal="true" aria-labelledby="location-dialog-title"><span className="resident-dialog-icon">⌖</span>{locationStatus ? <><h2 id="location-dialog-title">{locationStatusCopy[locationStatus].title}</h2><p>{locationStatusCopy[locationStatus].detail}</p></> : <><h2 id="location-dialog-title">Share your location</h2><p>Allow SafePath to find your area and check whether you are in a safe, at-risk, or hazard zone.</p></>}{locationMessage && <p className="alert-error">{locationMessage}</p>}<div className="resident-dialog-actions"><button className="resident-dialog-primary" type="button" onClick={locationStatus ? () => setLocationPromptOpen(false) : requestLocation}>{locationStatus ? "Continue" : locationMessage ? "Try again" : "Share location"}</button><button className="resident-dialog-secondary" type="button" onClick={() => setLocationPromptOpen(false)}>{locationStatus ? "Check again later" : "Not now"}</button></div></section></div>}
 			{locationStatus && !locationPromptOpen && <button className="resident-profile-trigger" type="button" onClick={() => setLocationPromptOpen(true)}>{locationStatusCopy[locationStatus].icon} {locationStatusCopy[locationStatus].title}</button>}
