@@ -110,7 +110,7 @@ function simulatedRoutePath(start: LatLng, target: LatLng, hazards: Hazard[]): L
   return path;
 }
 
-function ResidentMapSurface({ location, hazards, shelters, selectedRoute, ready, searchRequest, searchQuery, zoomRequest, streetViewRequest, onSearchResult, onSearchError }: { location: LatLng | null; hazards: Hazard[]; shelters: Shelter[]; selectedRoute: ResidentRoute | null; ready: boolean; searchRequest: number; searchQuery: string; zoomRequest: number; streetViewRequest: number; onSearchResult: (point: LatLng) => void; onSearchError: (message: string) => void }) {
+function ResidentMapSurface({ location, hazards, shelters, zones, selectedRoute, ready, searchRequest, searchQuery, zoomRequest, streetViewRequest, onSearchResult, onSearchError }: { location: LatLng | null; hazards: Hazard[]; shelters: Shelter[]; zones: Zone[]; selectedRoute: ResidentRoute | null; ready: boolean; searchRequest: number; searchQuery: string; zoomRequest: number; streetViewRequest: number; onSearchResult: (point: LatLng) => void; onSearchError: (message: string) => void }) {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<GoogleMapInstance | null>(null);
   const overlays = useRef<GoogleOverlay[]>([]);
@@ -125,6 +125,14 @@ function ResidentMapSurface({ location, hazards, shelters, selectedRoute, ready,
     if (!mapInstance.current) mapInstance.current = new mapsApi.maps.Map(mapElement.current, { center: location || mapCenter, zoom: location ? 13 : 3, streetViewControl: false, mapTypeControl: false, fullscreenControl: false, styles: googleMapStyles });
     overlays.current.forEach((overlay) => overlay.setMap(null));
     const nextOverlays: GoogleOverlay[] = [];
+    zones.forEach((zone) => {
+      const zoneColors = zone.zone_type === "safe"
+        ? { fill: "#72d6a3", stroke: "#328464" }
+        : zone.zone_type === "at_risk"
+          ? { fill: "#f2a65a", stroke: "#c77b2f" }
+          : { fill: "#f05d5e", stroke: "#c9444d" };
+      nextOverlays.push(new mapsApi.maps.Polygon({ map: mapInstance.current, paths: zone.coordinates, fillColor: zoneColors.fill, fillOpacity: 0.2, strokeColor: zoneColors.stroke, strokeOpacity: 0.9, strokeWeight: 2, title: zone.name }));
+    });
     hazards.forEach((hazard) => {
       const position = { lat: hazard.latitude, lng: hazard.longitude };
       nextOverlays.push(new mapsApi.maps.Circle({ map: mapInstance.current, center: position, radius: hazard.radius, fillColor: "#f05d5e", fillOpacity: 0.2, strokeColor: "#f05d5e", strokeOpacity: 0.85, strokeWeight: 2 }));
@@ -146,7 +154,7 @@ function ResidentMapSurface({ location, hazards, shelters, selectedRoute, ready,
       }
     }
     overlays.current = nextOverlays;
-  }, [hazards, location, ready, selectedRoute, shelters]);
+  }, [hazards, location, ready, selectedRoute, shelters, zones]);
 
   useEffect(() => {
     if (location && mapInstance.current) {
@@ -191,6 +199,7 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
   const router = useRouter();
   const [hazards, setHazards] = useState<Hazard[]>([]);
   const [shelters, setShelters] = useState<Shelter[]>([]);
+  const [zones, setZones] = useState<Zone[]>([]);
   const [location, setLocation] = useState<LatLng | null>(null);
   const [locationLabel, setLocationLabel] = useState("Location not shared");
   const [routes, setRoutes] = useState<ResidentRoute[]>([]);
@@ -212,9 +221,10 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
   useEffect(() => {
     async function loadPublicData() {
       try {
-        const [hazardsResponse, sheltersResponse] = await Promise.all([fetch(`${apiBaseUrl}/hazards/`), fetch(`${apiBaseUrl}/shelters/`)]);
+        const [hazardsResponse, sheltersResponse, zonesResponse] = await Promise.all([fetch(`${apiBaseUrl}/hazards/`), fetch(`${apiBaseUrl}/shelters/`), fetch(`${apiBaseUrl}/zones/`)]);
         if (hazardsResponse.ok) setHazards((await hazardsResponse.json()).filter((hazard: Hazard) => hazard.status === "active"));
         if (sheltersResponse.ok) setShelters((await sheltersResponse.json()).filter((shelter: Shelter) => shelter.status === "open"));
+        if (zonesResponse.ok) setZones(await zonesResponse.json());
       } catch {
         setRouteMessage("Live safety data is temporarily unavailable. Call local emergency services if you are in immediate danger.");
       }
@@ -262,7 +272,7 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
   return (
     <main className="resident-shell">
       {(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY) && <Script src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY}`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
-      <div className="resident-map-panel"><form className="resident-map-searchbar" onSubmit={(event) => { event.preventDefault(); if (searchQuery.trim()) setSearchRequest((current) => current + 1); }}><button className="resident-map-menu" type="button" aria-label="Open map menu">☰</button><input aria-label="Search places, addresses, or businesses" placeholder="Search places, addresses, or businesses..." value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} /><button className="resident-map-search" type="submit" aria-label="Search map">⌕</button></form><div className="resident-map-tools"><button type="button" aria-label="Show map layers" title="Map layers">Layers</button><button type="button" aria-label="Center on my location" title="My location" onClick={shareLocation}>My location</button><button type="button" aria-label="Open Street View" title="Street view" onClick={() => location ? setStreetViewRequest((current) => current + 1) : setRouteMessage("Share your location first to open Street View.")}>Street view</button><button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => setZoomRequest((current) => current + 1)}>+</button><button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => setZoomRequest((current) => current - 1)}>−</button></div><ResidentMapSurface location={location} hazards={hazards} shelters={shelters} selectedRoute={selectedRoute} ready={mapsReady} searchRequest={searchRequest} searchQuery={searchQuery} zoomRequest={zoomRequest} streetViewRequest={streetViewRequest} onSearchResult={() => setRouteMessage("")} onSearchError={setRouteMessage} /></div>
+      <div className="resident-map-panel"><form className="resident-map-searchbar" onSubmit={(event) => { event.preventDefault(); if (searchQuery.trim()) setSearchRequest((current) => current + 1); }}><button className="resident-map-menu" type="button" aria-label="Open map menu">☰</button><input aria-label="Search places, addresses, or businesses" placeholder="Search places, addresses, or businesses..." value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} /><button className="resident-map-search" type="submit" aria-label="Search map">⌕</button></form><div className="resident-map-tools"><button type="button" aria-label="Show map layers" title="Map layers">Layers</button><button type="button" aria-label="Center on my location" title="My location" onClick={shareLocation}>My location</button><button type="button" aria-label="Open Street View" title="Street view" onClick={() => location ? setStreetViewRequest((current) => current + 1) : setRouteMessage("Share your location first to open Street View.")}>Street view</button><button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => setZoomRequest((current) => current + 1)}>+</button><button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => setZoomRequest((current) => current - 1)}>−</button></div><ResidentMapSurface location={location} hazards={hazards} shelters={shelters} zones={zones} selectedRoute={selectedRoute} ready={mapsReady} searchRequest={searchRequest} searchQuery={searchQuery} zoomRequest={zoomRequest} streetViewRequest={streetViewRequest} onSearchResult={() => setRouteMessage("")} onSearchError={setRouteMessage} /></div>
       {locationPromptOpen && <div className="resident-dialog-backdrop"><section className="resident-dialog" role="dialog" aria-modal="true" aria-labelledby="location-dialog-title"><span className="resident-dialog-icon">◎</span><h2 id="location-dialog-title">Share your location</h2><p>We use your location to show nearby hazards and safe places.</p><div className="resident-dialog-actions"><button type="button" className="resident-dialog-primary" onClick={shareLocation}>Use my location</button><button type="button" className="resident-dialog-secondary" onClick={() => setLocationPromptOpen(false)}>Skip for now</button></div></section></div>}
       {profileOpen && <div className="resident-dialog-backdrop"><form className="resident-dialog" onSubmit={(event) => { event.preventDefault(); setProfileOpen(false); }}><span className="resident-dialog-icon">+</span><h2>Your details</h2><p>Add your name and phone so responders can identify you if you request help.</p><label>Name<input required value={residentName} onChange={(event) => setResidentName(event.target.value)} /></label><label>Phone number<input required type="tel" value={residentPhone} onChange={(event) => setResidentPhone(event.target.value)} /></label><div className="resident-dialog-actions"><button type="submit" className="resident-dialog-primary">Save details</button><button type="button" className="resident-dialog-secondary" onClick={() => setProfileOpen(false)}>Cancel</button></div></form></div>}
       <section className="resident-hero"><div className="resident-nav"><div className="resident-brand"><span className="resident-mark">+</span><strong>SafePath <b>AI</b></strong><span className="live-chip"><i /> LIVE SAFETY GUIDE</span></div><div className="resident-actions"><label className="language-select"><span>Language</span><select value={language} onChange={(event) => setLanguage(event.target.value)}><option>English</option><option>Swahili</option></select></label><button className="admin-link" onClick={() => router.push("/admin")}>Operator access</button></div></div><div className="resident-intro"><span className="eyebrow light-eyebrow">FOR PEOPLE IN THE AREA</span><h1>{copy.title}</h1><p>{copy.subtitle}</p><div className="resident-actions-row"><button className="location-button" onClick={shareLocation}>{location ? "✓ " : "◎ "}{location ? locationLabel : copy.share}</button><button className="route-button" onClick={findRoutes} disabled={loadingRoutes}>{loadingRoutes ? "Checking routes..." : copy.route} <span>→</span></button></div><small className="location-note">{location ? `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}` : "Your location stays on this device until you choose a route."}</small></div></section>
