@@ -98,7 +98,7 @@ function GoogleMapSurface({ onSelect, recenterPoint, recenterZoom, ready, mode, 
       mapInstance.current = new mapsApi.maps.Map(mapElement.current, {
         center: mapCenter,
         zoom: 3,
-        streetViewControl: true,
+        streetViewControl: false,
         mapTypeControl: false,
         fullscreenControl: false,
         styles: googleMapStyles,
@@ -415,6 +415,7 @@ export default function AdminConsole() {
             <div className="map-key"><span><i className="key-safe" /> Safe</span><span><i className="key-risk" /> At risk</span><span><i className="key-zone" /> Hazard zone</span></div><div className="zoom-controls"><button>+</button><button>−</button></div><div className="map-attribution">Map data © SafePath simulation</div>
             {effectiveSelected && <div className="person-card"><button className="close-card" onClick={() => setSelected(null)}>×</button><span className="eyebrow">PERSON PROFILE</span><h2>{effectiveSelected.name}</h2><p>{effectiveSelected.phone || "No phone number"}</p><div className="card-status"><i className={effectiveSelected.status === "at_risk" ? "key-risk" : "key-safe"} /> {effectiveSelected.status === "at_risk" ? "AT RISK" : "SAFE"}</div>{effectiveSelected.details && <div className="evacuation"><span>DETAILS</span><strong>{effectiveSelected.details}</strong></div>}</div>}
           </div>
+          <div className="map-footer"><div><span className="eyebrow">OPERATION</span><strong>Detect <b>→</b> Identify <b>→</b> Route <b>→</b> Communicate</strong></div>{stage === "alerted" && <div className="alert-banner"><span>✓</span><strong>{affected.length} evacuation alerts sent</strong><small>Africa&apos;s Talking · Demo queue</small></div>}{stage === "active" && <div className="alert-banner warning"><span>!</span><strong>{affected.length} people need evacuation</strong><small>Calculate safe routes to continue</small></div>}</div>
         </div>
       </section>
     </main>

@@ -1,342 +1,273 @@
 "use client";
 
 import Script from "next/script";
+import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
-type LatLng = { lat: number; lng: number };
-type Person = { id: number; name: string; phone: string; details: string; latitude: number; longitude: number; status: "safe" | "at_risk" };
+type ApiPerson = { id: number; name: string; phone: string; details: string; latitude: number; longitude: number; status: "safe" | "at_risk" };
 type Zone = { id: number; name: string; zone_type: "safe" | "at_risk" | "hazard"; details: string; coordinates: LatLng[] };
-type ResidentRoute = { distance_meters: number; duration_seconds: number; polyline: string; destination: { latitude: number; longitude: number } };
-type SearchResult = { id: string; label: string; detail: string; position: LatLng; person?: Person };
-type LocationStatus = "safe" | "at_risk" | "hazard";
+type Stage = "standby" | "active" | "routed" | "alerted";
+type AlertStatus = "idle" | "sending" | "sent" | "error";
+type LatLng = { lat: number; lng: number };
+type EditMode = "none" | "person" | "zone";
+type SearchResult = { id: string; label: string; detail: string; position: LatLng; person?: ApiPerson };
+type Hazard = { id: number; name: string; hazard_type: string; severity: string; latitude: number; longitude: number; radius: number; status: "active" | "cleared" };
+type Shelter = { id: number; name: string; latitude: number; longitude: number; capacity: number; current_occupancy: number; status: "open" | "closed" };
+type ResidentRoute = { shelter_id: number; shelter_name: string; distance_meters: number; duration_seconds: number; unsafe: boolean; hazards: string[]; safety_score: number };
+
 type GoogleMapsApi = {
-	maps: {
-		Map: new (element: HTMLElement, options: Record<string, unknown>) => GoogleMap;
-		Marker: new (options: Record<string, unknown>) => GoogleOverlay;
-		Polygon: new (options: Record<string, unknown>) => GoogleOverlay;
-		Polyline: new (options: Record<string, unknown>) => GoogleOverlay;
-		marker?: {
-			AdvancedMarkerElement?: new (options: Record<string, unknown>) => GoogleOverlay;
-		};
-	};
+  maps: {
+    Map: new (element: HTMLElement, options: Record<string, unknown>) => GoogleMapInstance;
+    Marker: new (options: Record<string, unknown>) => GoogleOverlay;
+    Circle: new (options: Record<string, unknown>) => GoogleOverlay;
+    Polygon: new (options: Record<string, unknown>) => GoogleOverlay;
+    Polyline: new (options: Record<string, unknown>) => GoogleOverlay;
+    Geocoder: new () => GoogleGeocoder;
+  };
 };
-type GoogleMap = { setCenter: (center: LatLng) => void; setZoom: (zoom: number) => void; getCenter?: () => { lat: () => number; lng: () => number } | undefined; getStreetView?: () => { setPosition: (position: LatLng) => void; setVisible: (visible: boolean) => void } };
-type GoogleOverlay = { setMap?: (map: GoogleMap | null) => void; map?: GoogleMap | null; addListener?: (event: string, callback: () => void) => void };
+type GoogleMapInstance = { setCenter: (center: LatLng) => void; setZoom: (zoom: number) => void; getStreetView: () => GoogleStreetView; addListener?: (event: string, callback: (event: { latLng?: { lat: () => number; lng: () => number } }) => void) => GoogleListener };
+type GoogleOverlay = { setMap: (map: GoogleMapInstance | null) => void };
+type GooglePolygon = GoogleOverlay & { getPath: () => { getArray: () => Array<{ lat: () => number; lng: () => number }> } };
+type GoogleListener = { remove: () => void };
+type GoogleStreetView = { setPosition: (position: LatLng) => void; setVisible: (visible: boolean) => void };
+type GoogleGeocoder = { geocode: (request: { address: string }, callback: (results: Array<{ geometry: { location: { lat: () => number; lng: () => number } } }>, status: string) => void) => void };
 
 const mapCenter: LatLng = { lat: 5, lng: 20 };
 const googleMapStyles = [
-	{ elementType: "geometry", stylers: [{ color: "#26343b" }] },
-	{ elementType: "labels.text.fill", stylers: [{ color: "#b9c8c9" }] },
-	{ elementType: "labels.text.stroke", stylers: [{ color: "#26343b" }] },
-	{ featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#53666b" }] },
-	{ featureType: "road", elementType: "geometry", stylers: [{ color: "#46585d" }] },
-	{ featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#65777a" }] },
-	{ featureType: "water", elementType: "geometry", stylers: [{ color: "#174c59" }] },
-	{ featureType: "poi", stylers: [{ visibility: "simplified" }] },
+  { elementType: "geometry", stylers: [{ color: "#26343b" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#b9c8c9" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#26343b" }] },
+  { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#53666b" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#46585d" }] },
+  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#36484d" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#65777a" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#174c59" }] },
+  { featureType: "poi", stylers: [{ visibility: "simplified" }] },
 ];
 
+function distanceBetweenPoints(first: LatLng, second: LatLng): number {
+  const latitudeDistance = (second.lat - first.lat) * 111_000;
+  const longitudeDistance = (second.lng - first.lng) * 111_000 * Math.cos(first.lat * Math.PI / 180);
+  return Math.sqrt(latitudeDistance ** 2 + longitudeDistance ** 2);
+}
+
 function pointInPolygon(point: LatLng, polygon: LatLng[]): boolean {
-	let inside = false;
-	for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
-		const current = polygon[index];
-		const prior = polygon[previous];
-		const crosses = current.lng > point.lng !== prior.lng > point.lng
-			&& point.lat < (prior.lat - current.lat) * (point.lng - current.lng) / (prior.lng - current.lng) + current.lat;
-		if (crosses) inside = !inside;
-	}
-	return inside;
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const current = polygon[index];
+    const prior = polygon[previous];
+    const crosses = current.lng > point.lng !== prior.lng > point.lng
+      && point.lat < (prior.lat - current.lat) * (point.lng - current.lng) / (prior.lng - current.lng) + current.lat;
+    if (crosses) inside = !inside;
+  }
+  return inside;
 }
 
 function zoomForZone(coordinates: LatLng[]): number {
-	const latitudeSpan = Math.max(...coordinates.map((coordinate) => coordinate.lat)) - Math.min(...coordinates.map((coordinate) => coordinate.lat));
-	const longitudeSpan = Math.max(...coordinates.map((coordinate) => coordinate.lng)) - Math.min(...coordinates.map((coordinate) => coordinate.lng));
-	const span = Math.max(latitudeSpan, longitudeSpan, 0.01);
-	return Math.max(5, Math.min(14, Math.floor(Math.log2(360 / span)) - 1));
+  const latitudes = coordinates.map((coordinate) => coordinate.lat);
+  const longitudes = coordinates.map((coordinate) => coordinate.lng);
+  const latitudeSpan = Math.max(...latitudes) - Math.min(...latitudes);
+  const longitudeSpan = Math.max(...longitudes) - Math.min(...longitudes);
+  const span = Math.max(latitudeSpan, longitudeSpan, 0.01);
+  return Math.max(5, Math.min(14, Math.floor(Math.log2(360 / span)) - 1));
 }
 
-function zoomForPerson(person: Person, zones: Zone[]): number {
-	const containingZone = zones.find((zone) => pointInPolygon({ lat: person.latitude, lng: person.longitude }, zone.coordinates));
-	return containingZone ? zoomForZone(containingZone.coordinates) : 14;
+function zoomForPerson(person: ApiPerson, zones: Zone[]): number {
+  const position = { lat: person.latitude, lng: person.longitude };
+  const containingZone = zones.find((zone) => pointInPolygon(position, zone.coordinates));
+  return containingZone ? zoomForZone(containingZone.coordinates) : 14;
 }
 
-function getLocationStatus(location: LatLng, zones: Zone[]): LocationStatus {
-	const containingZones = zones.filter((zone) => pointInPolygon(location, zone.coordinates));
-	if (containingZones.some((zone) => zone.zone_type === "hazard")) return "hazard";
-	if (containingZones.some((zone) => zone.zone_type === "at_risk")) return "at_risk";
-	return "safe";
+function formatDistance(meters: number): string {
+  return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
 }
 
-function decodePolyline(encoded: string): LatLng[] {
-	const points: LatLng[] = [];
-	let index = 0;
-	let lat = 0;
-	let lng = 0;
-	while (index < encoded.length) {
-		const values: number[] = [];
-		for (let coordinate = 0; coordinate < 2; coordinate += 1) {
-			let result = 0;
-			let shift = 0;
-			let byte: number;
-			do {
-				byte = encoded.charCodeAt(index) - 63;
-				index += 1;
-				result |= (byte & 0x1f) << shift;
-				shift += 5;
-			} while (byte >= 0x20 && index < encoded.length);
-			values.push((result & 1) ? ~(result >> 1) : result >> 1);
-		}
-		lat += values[0];
-		lng += values[1];
-		points.push({ lat: lat / 100000, lng: lng / 100000 });
-	}
-	return points;
+function formatDuration(seconds: number): string {
+  return `${Math.max(1, Math.round(seconds / 60))} min`;
 }
 
-function formatRouteDistance(meters: number): string {
-	return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
+function simulatedRoutePath(start: LatLng, target: LatLng, hazards: Hazard[]): LatLng[] {
+  const path = [start];
+  let current = start;
+
+  hazards.forEach((hazard) => {
+    const center = { lat: hazard.latitude, lng: hazard.longitude };
+    const startToTarget = { lat: target.lat - current.lat, lng: target.lng - current.lng };
+    const length = Math.sqrt(startToTarget.lat ** 2 + startToTarget.lng ** 2) || 1;
+    const projection = ((center.lat - current.lat) * startToTarget.lat + (center.lng - current.lng) * startToTarget.lng) / length ** 2;
+    const clampedProjection = Math.max(0, Math.min(1, projection));
+    const closest = { lat: current.lat + startToTarget.lat * clampedProjection, lng: current.lng + startToTarget.lng * clampedProjection };
+
+    if (projection > 0 && projection < 1 && distanceBetweenPoints(closest, center) < hazard.radius + 80) {
+      const side = startToTarget.lng * (center.lat - current.lat) - startToTarget.lat * (center.lng - current.lng) >= 0 ? 1 : -1;
+      const offset = (hazard.radius / 111_000 + 0.002) / length;
+      path.push({ lat: center.lat - startToTarget.lng * offset * side, lng: center.lng + startToTarget.lat * offset * side });
+      current = path[path.length - 1];
+    }
+  });
+
+  path.push(target);
+  return path;
 }
 
-function formatRouteDuration(seconds: number): string {
-	return `${Math.max(1, Math.round(seconds / 60))} min`;
-}
+function ResidentMapSurface({ location, hazards, shelters, selectedRoute, ready, searchRequest, searchQuery, zoomRequest, streetViewRequest, onSearchResult, onSearchError }: { location: LatLng | null; hazards: Hazard[]; shelters: Shelter[]; selectedRoute: ResidentRoute | null; ready: boolean; searchRequest: number; searchQuery: string; zoomRequest: number; streetViewRequest: number; onSearchResult: (point: LatLng) => void; onSearchError: (message: string) => void }) {
+  const mapElement = useRef<HTMLDivElement>(null);
+  const mapInstance = useRef<GoogleMapInstance | null>(null);
+  const overlays = useRef<GoogleOverlay[]>([]);
+  const lastSearchRequest = useRef(0);
+  const lastStreetViewRequest = useRef(0);
+  const lastZoomRequest = useRef(0);
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
 
-function markerContent(color: string, size = 14): HTMLDivElement {
-	const element = document.createElement("div");
-	element.style.background = color;
-	element.style.border = "2px solid #ffffff";
-	element.style.borderRadius = "50%";
-	element.style.boxShadow = "0 1px 4px rgba(0, 0, 0, .35)";
-	element.style.height = `${size}px`;
-	element.style.width = `${size}px`;
-	return element;
-}
+  useEffect(() => {
+    const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
+    if (!mapsApi || !mapElement.current || !ready) return;
+    if (!mapInstance.current) mapInstance.current = new mapsApi.maps.Map(mapElement.current, { center: location || mapCenter, zoom: location ? 13 : 3, streetViewControl: false, mapTypeControl: false, fullscreenControl: false, styles: googleMapStyles });
+    overlays.current.forEach((overlay) => overlay.setMap(null));
+    const nextOverlays: GoogleOverlay[] = [];
+    hazards.forEach((hazard) => {
+      const position = { lat: hazard.latitude, lng: hazard.longitude };
+      nextOverlays.push(new mapsApi.maps.Circle({ map: mapInstance.current, center: position, radius: hazard.radius, fillColor: "#f05d5e", fillOpacity: 0.2, strokeColor: "#f05d5e", strokeOpacity: 0.85, strokeWeight: 2 }));
+      nextOverlays.push(new mapsApi.maps.Marker({ map: mapInstance.current, position, title: `${hazard.name} hazard`, label: { text: "!", color: "#ffffff", fontWeight: "700" }, icon: { path: "M 0,0 m -13,0 a 13,13 0 1,0 26,0 a 13,13 0 1,0 -26,0", fillColor: "#f05d5e", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2, scale: 1 } }));
+    });
+    shelters.forEach((shelter) => {
+      const selected = shelter.id === selectedRoute?.shelter_id;
+      nextOverlays.push(new mapsApi.maps.Marker({ map: mapInstance.current, position: { lat: shelter.latitude, lng: shelter.longitude }, title: shelter.name, label: { text: selected ? "✓" : "S", color: "#173c3d", fontWeight: "700" }, icon: { path: "M 0,0 m -12,0 a 12,12 0 1,0 24,0 a 12,12 0 1,0 -24,0", fillColor: selected ? "#a6f0bf" : "#eaf8ef", fillOpacity: 1, strokeColor: "#328464", strokeWeight: 2, scale: 1 } }));
+    });
+    if (location) {
+      nextOverlays.push(new mapsApi.maps.Marker({ map: mapInstance.current, position: location, title: "Your shared location", icon: { path: "M 0,0 m -8,0 a 8,8 0 1,0 16,0 a 8,8 0 1,0 -16,0", fillColor: "#4fd1c5", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 3, scale: 1 } }));
+      const selectedShelter = selectedRoute && shelters.find((shelter) => shelter.id === selectedRoute.shelter_id);
+      const targetShelter = selectedShelter || shelters.slice().sort((first, second) => distanceBetweenPoints(location, { lat: first.latitude, lng: first.longitude }) - distanceBetweenPoints(location, { lat: second.latitude, lng: second.longitude }))[0];
+      if (targetShelter && hazards.length) {
+        const target = { lat: targetShelter.latitude, lng: targetShelter.longitude };
+        const path = simulatedRoutePath(location, target, hazards);
+        nextOverlays.push(new mapsApi.maps.Polyline({ map: mapInstance.current, path, strokeColor: "#ffffff", strokeOpacity: 0.95, strokeWeight: 9 }));
+        nextOverlays.push(new mapsApi.maps.Polyline({ map: mapInstance.current, path, strokeColor: "#2f80ed", strokeOpacity: 1, strokeWeight: 5 }));
+      }
+    }
+    overlays.current = nextOverlays;
+  }, [hazards, location, ready, selectedRoute, shelters]);
 
-function ResidentMap({ people, zones, center, zoom, userLocation, route, streetViewOpen, ready, onSelect }: { people: Person[]; zones: Zone[]; center: LatLng | null; zoom: number; userLocation: LatLng | null; route: ResidentRoute | null; streetViewOpen: boolean; ready: boolean; onSelect: (person: Person) => void }) {
-	const mapElement = useRef<HTMLDivElement>(null);
-	const mapInstance = useRef<GoogleMap | null>(null);
-	const overlays = useRef<GoogleOverlay[]>([]);
-	const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
+  useEffect(() => {
+    if (location && mapInstance.current) {
+      mapInstance.current.setCenter(location);
+      mapInstance.current.setZoom(14);
+    }
+  }, [location]);
 
-	useEffect(() => {
-		const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
-		if (!ready || !mapsApi?.maps?.Map || !mapElement.current) return;
-		if (!mapInstance.current) {
-			mapInstance.current = new mapsApi.maps.Map(mapElement.current, {
-				center: mapCenter,
-				zoom: 3,
-				streetViewControl: true,
-				mapTypeControl: false,
-				fullscreenControl: false,
-				mapId: process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID || "DEMO_MAP_ID",
-				styles: googleMapStyles,
-			});
-		}
-		overlays.current.forEach((overlay) => {
-			if (overlay.setMap) overlay.setMap(null);
-			else overlay.map = null;
-		});
-		const nextOverlays: GoogleOverlay[] = [];
-		const createMarker = (position: LatLng, title: string, color: string, size = 14) => {
-			const advancedMarker = mapsApi.maps.marker?.AdvancedMarkerElement;
-			if (advancedMarker) {
-				const marker = new advancedMarker({ map: mapInstance.current, position, title, content: markerContent(color, size) });
-				marker.addListener?.("click", () => {
-					if (title !== "Your location") {
-						const matchedPerson = people.find((person) => person.name === title && person.latitude === position.lat && person.longitude === position.lng);
-						if (matchedPerson) onSelect(matchedPerson);
-					}
-				});
-				return marker;
-			}
-			const marker = new mapsApi.maps.Marker({ map: mapInstance.current, position, title, icon: { path: "M 0,0 m -8,0 a 8,8 0 1,0 16,0 a 8,8 0 1,0 -16,0", fillColor: color, fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2, scale: 1 } }) as GoogleOverlay & { addListener?: (event: string, callback: () => void) => void };
-			marker.addListener?.("click", () => {
-				const matchedPerson = people.find((person) => person.name === title && person.latitude === position.lat && person.longitude === position.lng);
-				if (matchedPerson) onSelect(matchedPerson);
-			});
-			return marker;
-		};
-		people.forEach((person) => {
-			nextOverlays.push(createMarker({ lat: person.latitude, lng: person.longitude }, person.name, person.status === "at_risk" ? "#f05d5e" : "#72d6a3"));
-		});
-		zones.forEach((zone) => {
-			const colors = { safe: "#72d6a3", at_risk: "#f2a65a", hazard: "#f05d5e" };
-			nextOverlays.push(new mapsApi.maps.Polygon({ map: mapInstance.current, paths: zone.coordinates, fillColor: colors[zone.zone_type], fillOpacity: 0.24, strokeColor: colors[zone.zone_type], strokeWeight: 2 }));
-		});
-		if (userLocation) {
-			nextOverlays.push(createMarker(userLocation, "Your location", "#4285f4", 16));
-		}
-		if (route && userLocation) {
-			const path = route.polyline ? decodePolyline(route.polyline) : [userLocation];
-			if (path.length > 1) nextOverlays.push(new mapsApi.maps.Polyline({ map: mapInstance.current, path, strokeColor: "#4285f4", strokeOpacity: 0.95, strokeWeight: 5, zIndex: 2 }));
-		}
-		overlays.current = nextOverlays;
-	}, [onSelect, people, zones, userLocation, route, ready]);
+  useEffect(() => {
+    const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
+    if (!mapsApi || !mapInstance.current || searchRequest <= lastSearchRequest.current || !searchQuery.trim()) return;
+    lastSearchRequest.current = searchRequest;
+    new mapsApi.maps.Geocoder().geocode({ address: searchQuery }, (results, status) => {
+      if (status !== "OK" || !results[0]) {
+        onSearchError("That place could not be found.");
+        return;
+      }
+      const point = { lat: results[0].geometry.location.lat(), lng: results[0].geometry.location.lng() };
+      mapInstance.current?.setCenter(point);
+      mapInstance.current?.setZoom(15);
+      onSearchResult(point);
+    });
+  }, [onSearchError, onSearchResult, searchQuery, searchRequest]);
 
-	useEffect(() => {
-		if (center && mapInstance.current) {
-			mapInstance.current.setCenter(center);
-			mapInstance.current.setZoom(zoom);
-		}
-	}, [center, zoom]);
+  useEffect(() => {
+    if (!mapInstance.current || zoomRequest === lastZoomRequest.current) return;
+    lastZoomRequest.current = zoomRequest;
+    mapInstance.current.setZoom(Math.max(2, Math.min(20, 13 + zoomRequest)));
+  }, [zoomRequest]);
 
-	useEffect(() => {
-		if (!mapInstance.current) return;
-		const streetView = mapInstance.current.getStreetView?.();
-		if (!streetView) return;
-		if (!streetViewOpen) {
-			streetView.setVisible(false);
-			return;
-		}
-		const currentCenter = mapInstance.current.getCenter?.();
-		const position = userLocation || (currentCenter ? { lat: currentCenter.lat(), lng: currentCenter.lng() } : mapCenter);
-		streetView.setPosition(position);
-		streetView.setVisible(true);
-	}, [streetViewOpen, userLocation]);
+  useEffect(() => {
+    if (!mapInstance.current || !location || streetViewRequest <= lastStreetViewRequest.current) return;
+    lastStreetViewRequest.current = streetViewRequest;
+    mapInstance.current.getStreetView().setPosition(location);
+    mapInstance.current.getStreetView().setVisible(true);
+  }, [location, streetViewRequest]);
 
-	return apiKey ? <div className="resident-map-canvas" ref={mapElement} /> : <div className="resident-map-missing">Add <code>NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code> to load Google Maps.</div>;
+  return apiKey ? <div className="resident-map-canvas" ref={mapElement} /> : <div className="resident-map-missing">Add <code>NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code> to view the live map.</div>;
 }
 
 export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string }) {
-	const [mapsReady, setMapsReady] = useState(false);
-	const [people, setPeople] = useState<Person[]>([]);
-	const [zones, setZones] = useState<Zone[]>([]);
-	const [selected, setSelected] = useState<Person | null>(null);
-	const [searchQuery, setSearchQuery] = useState("");
-	const [searchOpen, setSearchOpen] = useState(false);
-	const [recenterPoint, setRecenterPoint] = useState<LatLng | null>(null);
-	const [recenterZoom, setRecenterZoom] = useState(12);
-	const [userLocation, setUserLocation] = useState<LatLng | null>(null);
-	const [locationPromptOpen, setLocationPromptOpen] = useState(true);
-	const [locationMessage, setLocationMessage] = useState("");
-	const [streetViewOpen, setStreetViewOpen] = useState(false);
-	const [recommendedRoute, setRecommendedRoute] = useState<ResidentRoute | null>(null);
-	const [routeLoading, setRouteLoading] = useState(false);
-	const [routeMessage, setRouteMessage] = useState("");
-	const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
+  const router = useRouter();
+  const [hazards, setHazards] = useState<Hazard[]>([]);
+  const [shelters, setShelters] = useState<Shelter[]>([]);
+  const [location, setLocation] = useState<LatLng | null>(null);
+  const [locationLabel, setLocationLabel] = useState("Location not shared");
+  const [routes, setRoutes] = useState<ResidentRoute[]>([]);
+  const [selectedRoute, setSelectedRoute] = useState<ResidentRoute | null>(null);
+  const [language, setLanguage] = useState("English");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [loadingRoutes, setLoadingRoutes] = useState(false);
+  const [routeMessage, setRouteMessage] = useState("");
+  const [mapsReady, setMapsReady] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchRequest, setSearchRequest] = useState(0);
+  const [zoomRequest, setZoomRequest] = useState(0);
+  const [streetViewRequest, setStreetViewRequest] = useState(0);
+  const [locationPromptOpen, setLocationPromptOpen] = useState(true);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [residentName, setResidentName] = useState("");
+  const [residentPhone, setResidentPhone] = useState("");
 
-	useEffect(() => {
-		async function loadMapData() {
-			try {
-				const [peopleResponse, zonesResponse] = await Promise.all([fetch(`${apiBaseUrl}/people/`), fetch(`${apiBaseUrl}/zones/`)]);
-				if (peopleResponse.ok) setPeople(await peopleResponse.json());
-				if (zonesResponse.ok) setZones(await zonesResponse.json());
-			} catch {
-			}
-		}
-		void loadMapData();
-	}, [apiBaseUrl]);
+  useEffect(() => {
+    async function loadPublicData() {
+      try {
+        const [hazardsResponse, sheltersResponse] = await Promise.all([fetch(`${apiBaseUrl}/hazards/`), fetch(`${apiBaseUrl}/shelters/`)]);
+        if (hazardsResponse.ok) setHazards((await hazardsResponse.json()).filter((hazard: Hazard) => hazard.status === "active"));
+        if (sheltersResponse.ok) setShelters((await sheltersResponse.json()).filter((shelter: Shelter) => shelter.status === "open"));
+      } catch {
+        setRouteMessage("Live safety data is temporarily unavailable. Call local emergency services if you are in immediate danger.");
+      }
+    }
+    void loadPublicData();
+  }, [apiBaseUrl]);
 
-	function requestLocation() {
-		if (!navigator.geolocation) {
-			setLocationMessage("Location sharing is not available in this browser.");
-			return;
-		}
-		setLocationMessage("");
-		navigator.geolocation.getCurrentPosition(
-			(position) => {
-				const location = { lat: position.coords.latitude, lng: position.coords.longitude };
-				setUserLocation(location);
-				setRecenterPoint(location);
-				setRecenterZoom(14);
-				setLocationPromptOpen(true);
-				setRouteMessage("");
-			},
-			(error) => {
-				setLocationMessage(error.code === error.PERMISSION_DENIED ? "Location access was denied. You can allow it in your browser settings." : "We could not determine your location. Please try again.");
-			},
-			{ enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 },
-		);
-	}
+  function shareLocation() {
+    if (!navigator.geolocation) {
+      setRouteMessage("Location sharing is not available in this browser.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition((position) => {
+      const nextLocation = { lat: position.coords.latitude, lng: position.coords.longitude };
+      setLocation(nextLocation);
+      setLocationLabel("Your location shared");
+      setRouteMessage("");
+      setLocationPromptOpen(false);
+    }, () => setRouteMessage("We could not access your location. You can try again or contact emergency services."), { enableHighAccuracy: true, timeout: 10000 });
+  }
 
-	useEffect(() => {
-		if (!userLocation) return;
-		const hazardZone = zones.find((zone) => zone.zone_type === "hazard" && pointInPolygon(userLocation, zone.coordinates));
-		if (!hazardZone) {
-			setRecommendedRoute(null);
-			setRouteLoading(false);
-			setRouteMessage("");
-			return;
-		}
-		const hazardCoordinates = hazardZone.coordinates;
-		const location: LatLng = userLocation;
-		let cancelled = false;
-		async function loadRecommendedRoute() {
-			setRouteLoading(true);
-			setRouteMessage("");
-			try {
-				const response = await fetch(`${apiBaseUrl}/route/exit/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ latitude: location.lat, longitude: location.lng, hazard_zone: hazardCoordinates }) });
-				const result = await response.json();
-				if (!response.ok) throw new Error(result.error || "Route could not be calculated");
-				if (!cancelled) {
-					setRecommendedRoute(result.route || null);
-					if (!result.route) setRouteMessage("No exit route is currently available.");
-				}
-			} catch {
-				if (!cancelled) setRouteMessage("We could not calculate a safe route. Please try again shortly.");
-			} finally {
-				if (!cancelled) setRouteLoading(false);
-			}
-		}
-		void loadRecommendedRoute();
-		return () => { cancelled = true; };
-	}, [apiBaseUrl, userLocation, zones]);
+  async function findRoutes() {
+    if (!location) {
+      shareLocation();
+      return;
+    }
+    setLoadingRoutes(true);
+    setRouteMessage("");
+    try {
+      const response = await fetch(`${apiBaseUrl}/route/recommend/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ latitude: location.lat, longitude: location.lng }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Route search failed");
+      setRoutes(result.routes || []);
+      setSelectedRoute(result.recommended_route || null);
+      if (!result.routes?.length) setRouteMessage("No clear route is available right now. Move to a safe, elevated place and wait for an updated alert.");
+    } catch {
+      setRouteMessage("Routes could not be calculated right now. Stay away from marked hazard areas and seek local help.");
+    } finally {
+      setLoadingRoutes(false);
+    }
+  }
 
-	const locationStatus = userLocation ? getLocationStatus(userLocation, zones) : null;
-	const locationStatusCopy = {
-		safe: { title: "You are in a safe zone", detail: "No active hazards are reported in your current area.", icon: "✓" },
-		at_risk: { title: "You are in an at-risk zone", detail: "Stay alert and review the recommended safe routes.", icon: "!" },
-		hazard: { title: "You are in a hazard zone", detail: "Move away from this area and follow local emergency guidance.", icon: "!" },
-	};
+  const copy = language === "Swahili" ? { title: "Njia salama kwako", subtitle: "Pata maelekezo ya haraka kulingana na hatari zilizo karibu.", share: "Shiriki eneo langu", route: "Nionyeshe njia", help: "Mahali pa kupata msaada", risks: "Elewa hatari", calm: "Nahitaji msaada wa utulivu" } : { title: "A safer way through", subtitle: "Get clear guidance based on hazards near you. Share your location once, then choose a route.", share: "Share my location", route: "Find my safe route", help: "Help nearby", risks: "Understand the risk", calm: "I need help staying calm" };
 
-	const searchResults: SearchResult[] = (() => {
-		const query = searchQuery.trim().toLowerCase();
-		if (!query) return [];
-		const coordinateParts = query.split(",").map(Number);
-		if (coordinateParts.length === 2 && coordinateParts.every(Number.isFinite)) {
-			const [lat, lng] = coordinateParts;
-			if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) return [{ id: "coordinates", label: `${lat}, ${lng}`, detail: "Coordinates", position: { lat, lng } }];
-		}
-		const results: SearchResult[] = [];
-		people.forEach((person) => {
-			if (`${person.name} ${person.phone} ${person.details}`.toLowerCase().includes(query)) results.push({ id: `person-${person.id}`, label: person.name, detail: person.phone || "Saved person", position: { lat: person.latitude, lng: person.longitude }, person });
-		});
-		zones.forEach((zone) => {
-			if (`${zone.name} ${zone.details}`.toLowerCase().includes(query) && zone.coordinates[0]) results.push({ id: `zone-${zone.id}`, label: zone.name, detail: `${zone.zone_type.replace("_", " ")} zone`, position: zone.coordinates[0] });
-		});
-		return results.slice(0, 6);
-	})();
-
-	function selectSearchResult(result: SearchResult) {
-		if (result.person) setSelected(result.person);
-		setSearchQuery(result.label);
-		setSearchOpen(false);
-		setRecenterPoint(result.position);
-		const zone = zones.find((candidate) => `zone-${candidate.id}` === result.id);
-		setRecenterZoom(result.person ? zoomForPerson(result.person, zones) : zone ? zoomForZone(zone.coordinates) : 14);
-	}
-
-	function submitSearch(event: FormEvent<HTMLFormElement>) {
-		event.preventDefault();
-		if (searchResults[0]) selectSearchResult(searchResults[0]);
-	}
-
-	return (
-		<main className="resident-shell">
-			{apiKey && <Script src={`https://maps.googleapis.com/maps/api/js?key=${apiKey}&loading=async`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
-			<div className="resident-map-panel">
-				<ResidentMap people={people} zones={zones} center={recenterPoint} zoom={recenterZoom} userLocation={userLocation} route={recommendedRoute} streetViewOpen={streetViewOpen} ready={mapsReady} onSelect={setSelected} />
-				<form className="resident-map-searchbar" onSubmit={submitSearch}>
-					<button className="resident-map-menu" type="button" aria-label="Map menu">☰</button>
-					<input aria-label="Search people, places, or coordinates" placeholder="Search people, places, or coordinates" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} />
-					<button className="resident-map-search" type="submit" aria-label="Search">⌕</button>
-					{searchOpen && searchQuery.trim() && <div className="search-results">{searchResults.length ? searchResults.map((result) => <button type="button" className="search-result" key={result.id} onClick={() => selectSearchResult(result)}><strong>{result.label}</strong><small>{result.detail}</small></button>) : <span className="search-empty">No matching map data</span>}</div>}
-				</form>
-				<div className="resident-map-tools"><button type="button">Layers</button><button type="button" aria-label="My location">◎</button><button type="button" aria-label={streetViewOpen ? "Exit Street View" : "Open Street View"} onClick={() => setStreetViewOpen((current) => !current)}>{streetViewOpen ? "Exit Street View" : "Street View"}</button><button type="button" aria-label="Zoom in" onClick={() => setRecenterZoom((current) => Math.min(20, current + 1))}>+</button><button type="button" aria-label="Zoom out" onClick={() => setRecenterZoom((current) => Math.max(1, current - 1))}>−</button></div>
-				{selected && <div className="person-card"><button className="close-card" onClick={() => setSelected(null)} aria-label="Close profile">×</button><span className="eyebrow">PERSON PROFILE</span><h2>{selected.name}</h2><p>{selected.phone || "No phone number"}</p><div className="card-status"><i className={selected.status === "at_risk" ? "key-risk" : "key-safe"} /> {selected.status === "at_risk" ? "AT RISK" : "SAFE"}</div></div>}
-				{locationStatus === "hazard" && (routeLoading || recommendedRoute || routeMessage) && <div className="resident-route-card"><span className="eyebrow">SHORTEST WAY OUT</span>{routeLoading ? <p>Calculating the shortest route outside the hazard zone...</p> : recommendedRoute ? <><h2>Nearest safe exit</h2><p>{formatRouteDistance(recommendedRoute.distance_meters)} · {formatRouteDuration(recommendedRoute.duration_seconds)}</p><strong>Follow the blue route until you are outside the hazard zone.</strong></> : <p>{routeMessage}</p>}</div>}
-			</div>
-			{locationPromptOpen && <div className="resident-dialog-backdrop"><section className="resident-dialog" role="dialog" aria-modal="true" aria-labelledby="location-dialog-title"><span className="resident-dialog-icon">⌖</span>{locationStatus ? <><h2 id="location-dialog-title">{locationStatusCopy[locationStatus].title}</h2><p>{locationStatusCopy[locationStatus].detail}</p></> : <><h2 id="location-dialog-title">Share your location</h2><p>Allow SafePath to find your area and check whether you are in a safe, at-risk, or hazard zone.</p></>}{locationMessage && <p className="alert-error">{locationMessage}</p>}<div className="resident-dialog-actions"><button className="resident-dialog-primary" type="button" onClick={locationStatus ? () => setLocationPromptOpen(false) : requestLocation}>{locationStatus ? "Continue" : locationMessage ? "Try again" : "Share location"}</button><button className="resident-dialog-secondary" type="button" onClick={() => setLocationPromptOpen(false)}>{locationStatus ? "Check again later" : "Not now"}</button></div></section></div>}
-			{locationStatus && !locationPromptOpen && <button className="resident-profile-trigger" type="button" onClick={() => setLocationPromptOpen(true)}>{locationStatusCopy[locationStatus].icon} {locationStatusCopy[locationStatus].title}</button>}
-		</main>
-	);
+  return (
+    <main className="resident-shell">
+      {(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY) && <Script src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY}`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
+      <div className="resident-map-panel"><form className="resident-map-searchbar" onSubmit={(event) => { event.preventDefault(); if (searchQuery.trim()) setSearchRequest((current) => current + 1); }}><button className="resident-map-menu" type="button" aria-label="Open map menu">☰</button><input aria-label="Search places, addresses, or businesses" placeholder="Search places, addresses, or businesses..." value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} /><button className="resident-map-search" type="submit" aria-label="Search map">⌕</button></form><div className="resident-map-tools"><button type="button" aria-label="Show map layers" title="Map layers">Layers</button><button type="button" aria-label="Center on my location" title="My location" onClick={shareLocation}>My location</button><button type="button" aria-label="Open Street View" title="Street view" onClick={() => location ? setStreetViewRequest((current) => current + 1) : setRouteMessage("Share your location first to open Street View.")}>Street view</button><button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => setZoomRequest((current) => current + 1)}>+</button><button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => setZoomRequest((current) => current - 1)}>−</button></div><ResidentMapSurface location={location} hazards={hazards} shelters={shelters} selectedRoute={selectedRoute} ready={mapsReady} searchRequest={searchRequest} searchQuery={searchQuery} zoomRequest={zoomRequest} streetViewRequest={streetViewRequest} onSearchResult={() => setRouteMessage("")} onSearchError={setRouteMessage} /></div>
+      {locationPromptOpen && <div className="resident-dialog-backdrop"><section className="resident-dialog" role="dialog" aria-modal="true" aria-labelledby="location-dialog-title"><span className="resident-dialog-icon">◎</span><h2 id="location-dialog-title">Share your location</h2><p>We use your location to show nearby hazards and safe places.</p><div className="resident-dialog-actions"><button type="button" className="resident-dialog-primary" onClick={shareLocation}>Use my location</button><button type="button" className="resident-dialog-secondary" onClick={() => setLocationPromptOpen(false)}>Skip for now</button></div></section></div>}
+      {profileOpen && <div className="resident-dialog-backdrop"><form className="resident-dialog" onSubmit={(event) => { event.preventDefault(); setProfileOpen(false); }}><span className="resident-dialog-icon">+</span><h2>Your details</h2><p>Add your name and phone so responders can identify you if you request help.</p><label>Name<input required value={residentName} onChange={(event) => setResidentName(event.target.value)} /></label><label>Phone number<input required type="tel" value={residentPhone} onChange={(event) => setResidentPhone(event.target.value)} /></label><div className="resident-dialog-actions"><button type="submit" className="resident-dialog-primary">Save details</button><button type="button" className="resident-dialog-secondary" onClick={() => setProfileOpen(false)}>Cancel</button></div></form></div>}
+      <section className="resident-hero"><div className="resident-nav"><div className="resident-brand"><span className="resident-mark">+</span><strong>SafePath <b>AI</b></strong><span className="live-chip"><i /> LIVE SAFETY GUIDE</span></div><div className="resident-actions"><label className="language-select"><span>Language</span><select value={language} onChange={(event) => setLanguage(event.target.value)}><option>English</option><option>Swahili</option></select></label><button className="admin-link" onClick={() => router.push("/admin")}>Operator access</button></div></div><div className="resident-intro"><span className="eyebrow light-eyebrow">FOR PEOPLE IN THE AREA</span><h1>{copy.title}</h1><p>{copy.subtitle}</p><div className="resident-actions-row"><button className="location-button" onClick={shareLocation}>{location ? "✓ " : "◎ "}{location ? locationLabel : copy.share}</button><button className="route-button" onClick={findRoutes} disabled={loadingRoutes}>{loadingRoutes ? "Checking routes..." : copy.route} <span>→</span></button></div><small className="location-note">{location ? `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}` : "Your location stays on this device until you choose a route."}</small></div></section>
+      <section className="resident-content"><div className="resident-main-column"><div className={`safety-status ${hazards.length ? "has-hazard" : "clear"}`}><span className="status-pulse">{hazards.length ? "!" : "✓"}</span><div><span className="eyebrow">CURRENT AREA STATUS</span><h2>{hazards.length ? `${hazards.length} active hazard${hazards.length === 1 ? "" : "s"} nearby` : "No active hazards reported"}</h2><p>{hazards.length ? "Stay calm. Review the route options below and keep away from marked areas." : "We are monitoring the area for changes."}</p></div><span className="status-time">Updated now</span></div>{routeMessage && <p className="resident-message">{routeMessage}</p>}<div className="section-heading"><div><span className="eyebrow">YOUR OPTIONS</span><h2>{selectedRoute ? "Choose a route to help" : "Ready when you are"}</h2></div>{routes.length > 0 && <span className="route-count">{routes.length} options</span>}</div>{routes.length > 0 ? <div className="route-list">{routes.map((route, index) => <button className={`route-card ${selectedRoute?.shelter_id === route.shelter_id ? "chosen" : ""}`} key={route.shelter_id} onClick={() => setSelectedRoute(route)}><span className="route-number">{index + 1}</span><span className="route-card-content"><strong>{route.shelter_name}</strong><small>{formatDuration(route.duration_seconds)} · {formatDistance(route.distance_meters)} · {route.hazards.length ? `Avoids ${route.hazards.join(", ")}` : "No active hazards detected on route"}</small></span><span className="safety-score">{route.safety_score}<small>SAFETY</small></span></button>)}</div> : <div className="empty-routes"><span className="empty-icon">◎</span><strong>Share your location to see nearby routes</strong><p>We will compare open help points and explain the risks before you choose.</p><button className="text-action" onClick={shareLocation}>{copy.share} →</button></div>}<div className="risk-section"><div className="section-heading"><div><span className="eyebrow">WHAT THE RISK MEANS</span><h2>{copy.risks}</h2></div></div><div className="risk-grid"><div><span>01</span><strong>Hazard</strong><p>The dangerous event itself, such as flooding or fire.</p></div><div><span>02</span><strong>Exposure</strong><p>People, roads, and buildings that are in its path.</p></div><div><span>03</span><strong>Vulnerability</strong><p>How easily people may be harmed based on their situation.</p></div></div></div></div><aside className="resident-side"><div className="help-panel"><div className="section-heading"><div><span className="eyebrow">OPEN SUPPORT POINTS</span><h2>{copy.help}</h2></div><span className="help-icon">+</span></div>{shelters.length ? shelters.slice(0, 4).map((shelter) => <div className="help-item" key={shelter.id}><span className="help-pin">⌂</span><div><strong>{shelter.name}</strong><small>{shelter.capacity - shelter.current_occupancy > 0 ? `${shelter.capacity - shelter.current_occupancy} spaces available` : "Capacity may be full"}</small></div><span className="open-dot">OPEN</span></div>) : <p className="muted-copy">Help points will appear here when the response team publishes them.</p>}</div><div className="meet-panel"><span className="eyebrow">MEET ME IN THE MIDDLE</span><h2>Let help find you.</h2><p>Share your chosen route with a trusted person or rescue team when this connection is available.</p><button className="secondary-resident-button" onClick={() => setRouteMessage("Your selected help point is ready to share from this device.")} disabled={!selectedRoute}>Share my plan <span>↗</span></button></div><button className="calm-button" onClick={() => setChatOpen(!chatOpen)}><span>✦</span>{copy.calm}<b>→</b></button>{chatOpen && <div className="calm-panel"><strong>You are doing the right thing.</strong><p>Take one slow breath in for four counts and out for six. Move away from water, smoke, or unstable structures. Follow official instructions and call local emergency services if you are in immediate danger.</p><button onClick={() => setChatOpen(false)}>Close guide</button></div>}</aside></section><footer className="resident-footer"><span>SafePath AI · Guidance uses available local data.</span><span>In immediate danger, contact local emergency services.</span></footer>
+    </main>
+  );
 }
+
