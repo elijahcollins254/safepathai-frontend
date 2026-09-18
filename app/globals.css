@@ -1,4 +1,5 @@
 .search-form { background: rgba(246, 248, 243, .94); border-radius: 6px; box-shadow: 0 5px 18px rgba(11, 30, 31, .12); display: flex; flex: 1; position: relative; }
+.travel-mode-picker { align-items: center; display: flex; gap: 6px; margin-top: 18px; }.travel-mode-picker span { color: #8fb9aa; font-size: 10px; margin-right: 3px; }.travel-mode-picker button { background: rgba(230, 238, 227, .1); border: 1px solid rgba(230, 238, 227, .35); border-radius: 4px; color: #d5e8dc; cursor: pointer; font-size: 10px; padding: 7px 10px; }.travel-mode-picker button.selected, .travel-mode-picker button:hover { background: #e6eee3; color: #19484a; }
 .resident-shell { background: #f3f0e8; color: #203638; min-height: 100vh; }
 .resident-hero { background: #123f43; color: #f5f1e6; min-height: 440px; overflow: hidden; position: relative; }
 .resident-hero::after { background: repeating-linear-gradient(125deg, transparent 0 105px, rgba(151, 207, 183, .08) 106px 108px, transparent 109px 190px); content: ""; inset: 0; pointer-events: none; position: absolute; }
