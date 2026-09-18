@@ -13,7 +13,7 @@ type EditMode = "none" | "person" | "zone";
 type SearchResult = { id: string; label: string; detail: string; position: LatLng; person?: ApiPerson };
 type Hazard = { id: number; name: string; hazard_type: string; severity: string; latitude: number; longitude: number; radius: number; status: "active" | "cleared" };
 type Shelter = { id: number; name: string; latitude: number; longitude: number; capacity: number; current_occupancy: number; status: "open" | "closed" };
-type ResidentRoute = { shelter_id: number; shelter_name: string; distance_meters: number; duration_seconds: number; unsafe: boolean; hazards: string[]; safety_score: number };
+type ResidentRoute = { shelter_id: number; shelter_name: string; distance_meters: number; duration_seconds: number; polyline?: string; unsafe: boolean; hazards: string[]; safety_score: number };
 
 type GoogleMapsApi = {
   maps: {
@@ -112,6 +112,34 @@ function simulatedRoutePath(start: LatLng, target: LatLng, hazards: Hazard[]): L
   return path;
 }
 
+function decodePolyline(encoded: string): LatLng[] {
+  const points: LatLng[] = [];
+  let index = 0;
+  let latitude = 0;
+  let longitude = 0;
+
+  while (index < encoded.length) {
+    const values: number[] = [];
+    for (let coordinate = 0; coordinate < 2; coordinate += 1) {
+      let result = 0;
+      let shift = 0;
+      let byte = 0;
+      do {
+        byte = encoded.charCodeAt(index) - 63;
+        index += 1;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20 && index < encoded.length);
+      values.push((result & 1) ? ~(result >> 1) : result >> 1);
+    }
+    latitude += values[0];
+    longitude += values[1];
+    points.push({ lat: latitude / 100000, lng: longitude / 100000 });
+  }
+
+  return points;
+}
+
 function ResidentMapSurface({ location, hazards, shelters, zones, selectedRoute, ready, searchRequest, searchQuery, searchPoint, zoomRequest, streetViewRequest, onSearchResult, onSearchError }: { location: LatLng | null; hazards: Hazard[]; shelters: Shelter[]; zones: Zone[]; selectedRoute: ResidentRoute | null; ready: boolean; searchRequest: number; searchQuery: string; searchPoint: LatLng | null; zoomRequest: number; streetViewRequest: number; onSearchResult: (point: LatLng) => void; onSearchError: (message: string) => void }) {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<GoogleMapInstance | null>(null);
@@ -150,7 +178,7 @@ function ResidentMapSurface({ location, hazards, shelters, zones, selectedRoute,
       const targetShelter = selectedShelter || shelters.slice().sort((first, second) => distanceBetweenPoints(location, { lat: first.latitude, lng: first.longitude }) - distanceBetweenPoints(location, { lat: second.latitude, lng: second.longitude }))[0];
       if (targetShelter && hazards.length) {
         const target = { lat: targetShelter.latitude, lng: targetShelter.longitude };
-        const path = simulatedRoutePath(location, target, hazards);
+        const path = selectedRoute?.polyline ? decodePolyline(selectedRoute.polyline) : simulatedRoutePath(location, target, hazards);
         nextOverlays.push(new mapsApi.maps.Polyline({ map: mapInstance.current, path, strokeColor: "#ffffff", strokeOpacity: 0.95, strokeWeight: 9 }));
         nextOverlays.push(new mapsApi.maps.Polyline({ map: mapInstance.current, path, strokeColor: "#2f80ed", strokeOpacity: 1, strokeWeight: 5 }));
       }
@@ -240,6 +268,8 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
       }
     }
     void loadPublicData();
+    const refreshTimer = window.setInterval(() => void loadPublicData(), 30_000);
+    return () => window.clearInterval(refreshTimer);
   }, [apiBaseUrl]);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -296,6 +326,10 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
       setLoadingRoutes(false);
     }
   }
+
+  useEffect(() => {
+    if (location) void findRoutes();
+  }, [hazards, zones, location]);
 
   const copy = language === "Swahili" ? { title: "Njia salama kwako", subtitle: "Pata maelekezo ya haraka kulingana na hatari zilizo karibu.", share: "Shiriki eneo langu", route: "Nionyeshe njia", help: "Mahali pa kupata msaada", risks: "Elewa hatari", calm: "Nahitaji msaada wa utulivu" } : { title: "A safer way through", subtitle: "Get clear guidance based on hazards near you. Share your location once, then choose a route.", share: "Share my location", route: "Find my safe route", help: "Help nearby", risks: "Understand the risk", calm: "I need help staying calm" };
 
