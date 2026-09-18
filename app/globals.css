@@ -107,6 +107,32 @@
   .resident-owner-button { bottom: max(18px, env(safe-area-inset-bottom)); right: 17px; }
   .resident-hazard-alert { left: 12px; top: 185px; width: min(270px, calc(100% - 24px)); }
 }
+
+.resident-map-quick-actions { display: grid; gap: 10px; left: 24px; position: absolute; top: 50%; transform: translateY(-50%); z-index: 4; }
+.resident-map-quick-actions button, .resident-map-tools button { align-items: center; -webkit-backdrop-filter: blur(18px) saturate(145%); backdrop-filter: blur(18px) saturate(145%); background: linear-gradient(145deg, rgba(245, 253, 249, .72), rgba(177, 224, 211, .3)); border: 1px solid rgba(255, 255, 255, .72); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .82), 0 10px 24px rgba(8, 35, 38, .2); color: #214b4c; display: flex; flex-direction: column; gap: 2px; height: 46px; justify-content: center; min-height: 46px; min-width: 46px; padding: 0; position: relative; width: 46px; }
+.resident-map-quick-actions button:hover, .resident-map-tools button:hover { background: linear-gradient(145deg, rgba(255, 255, 255, .9), rgba(188, 239, 218, .58)); box-shadow: inset 0 1px 0 #fff, 0 13px 28px rgba(8, 35, 38, .28); color: #123f43; transform: translateY(-2px); }
+.resident-map-quick-actions button:active, .resident-map-tools button:active { transform: translateY(0) scale(.96); }
+.resident-map-quick-actions button span, .resident-map-tools button span { font-size: 18px; font-weight: 700; line-height: 1; }
+.resident-map-quick-actions button small, .resident-map-tools button small { background: rgba(18, 42, 43, .86); border: 1px solid rgba(255, 255, 255, .18); border-radius: 6px; color: #f6f8f3; font-size: 8px; left: 50%; line-height: 1.1; padding: 4px 6px; pointer-events: none; position: absolute; top: calc(100% + 7px); transform: translateX(-50%) translateY(-3px); transition: opacity .18s ease, transform .18s ease; white-space: nowrap; }
+.resident-map-quick-actions button:hover small, .resident-map-tools button:hover small { opacity: 1; transform: translateX(-50%) translateY(0); }
+.resident-map-quick-actions .danger-action { background: linear-gradient(145deg, rgba(255, 235, 226, .86), rgba(239, 147, 126, .46)); color: #a33f36; }
+.resident-map-tools { gap: 10px; right: 24px; top: 130px; }
+.resident-map-tools button { border-radius: 15px; }
+.resident-map-tools button small { top: 50%; left: auto; right: calc(100% + 8px); transform: translateY(-50%) translateX(3px); }
+.resident-map-tools button:hover small { transform: translateY(-50%) translateX(0); }
+.resident-layer-panel { -webkit-backdrop-filter: blur(22px) saturate(150%); backdrop-filter: blur(22px) saturate(150%); background: rgba(235, 248, 242, .78); border: 1px solid rgba(255, 255, 255, .74); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85), 0 16px 34px rgba(8, 35, 38, .22); color: #214b4c; display: grid; gap: 10px; padding: 14px; position: absolute; right: 82px; top: 130px; width: 152px; z-index: 4; }
+.resident-layer-panel strong { font-size: 11px; letter-spacing: .04em; }
+.resident-layer-panel label { align-items: center; display: flex; font-size: 10px; gap: 7px; }
+.resident-layer-panel input { accent-color: #328b78; height: 14px; margin: 0; width: 14px; }
+
+@media (max-width: 760px) {
+  .resident-map-quick-actions { left: 17px; }
+  .resident-map-tools { right: 17px; top: 84px; }
+  .resident-map-quick-actions button, .resident-map-tools button { height: 40px; min-height: 40px; min-width: 40px; width: 40px; }
+  .resident-map-quick-actions button span, .resident-map-tools button span { font-size: 16px; }
+  .resident-map-quick-actions button small, .resident-map-tools button small { font-size: 7px; }
+  .resident-layer-panel { right: 70px; top: 84px; }
+}
 @import "tailwindcss";
 
 :root {
