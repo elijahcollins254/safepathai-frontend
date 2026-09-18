@@ -47,6 +47,29 @@ function distanceBetweenPoints(first: LatLng, second: LatLng): number {
   return Math.sqrt(latitudeDistance ** 2 + longitudeDistance ** 2);
 }
 
+function smoothPolygonPath(points: LatLng[], segmentsPerEdge = 8): LatLng[] {
+  if (points.length < 3) return points;
+
+  const smoothed: LatLng[] = [];
+  for (let index = 0; index < points.length; index += 1) {
+    const previous = points[(index - 1 + points.length) % points.length];
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    const nextNext = points[(index + 2) % points.length];
+
+    for (let segment = 0; segment < segmentsPerEdge; segment += 1) {
+      const t = segment / segmentsPerEdge;
+      const tSquared = t * t;
+      const tCubed = tSquared * t;
+      smoothed.push({
+        lat: 0.5 * ((2 * current.lat) + (-previous.lat + next.lat) * t + (2 * previous.lat - 5 * current.lat + 4 * next.lat - nextNext.lat) * tSquared + (-previous.lat + 3 * current.lat - 3 * next.lat + nextNext.lat) * tCubed),
+        lng: 0.5 * ((2 * current.lng) + (-previous.lng + next.lng) * t + (2 * previous.lng - 5 * current.lng + 4 * next.lng - nextNext.lng) * tSquared + (-previous.lng + 3 * current.lng - 3 * next.lng + nextNext.lng) * tCubed),
+      });
+    }
+  }
+  return smoothed;
+}
+
 function pointInPolygon(point: LatLng, polygon: LatLng[]): boolean {
   let inside = false;
   for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
@@ -144,8 +167,9 @@ function GoogleMapSurface({ onSelect, recenterPoint, recenterZoom, ready, mode, 
 
     if (mode === "zone" && finishZoneSignal > lastFinishSignal.current && zonePoints.length >= 3) {
       lastFinishSignal.current = finishZoneSignal;
-      const polygon = new mapsApi.maps.Polygon({ map: mapInstance.current, paths: zonePoints, fillColor: "#f05d5e", fillOpacity: 0.25, strokeColor: "#f05d5e", strokeWeight: 2 }) as GooglePolygon;
-      onZoneDrawn(zonePoints, polygon);
+      const smoothedCoordinates = smoothPolygonPath(zonePoints);
+      const polygon = new mapsApi.maps.Polygon({ map: mapInstance.current, paths: smoothedCoordinates, fillColor: "#f05d5e", fillOpacity: 0.25, strokeColor: "#f05d5e", strokeWeight: 2 }) as GooglePolygon;
+      onZoneDrawn(smoothedCoordinates, polygon);
     }
 
     people.forEach((person) => {
