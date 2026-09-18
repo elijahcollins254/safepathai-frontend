@@ -23,6 +23,7 @@ type GoogleMapsApi = {
     Polygon: new (options: Record<string, unknown>) => GoogleOverlay;
     Polyline: new (options: Record<string, unknown>) => GoogleOverlay;
     Geocoder: new () => GoogleGeocoder;
+    places?: { Autocomplete: new (input: HTMLInputElement, options: Record<string, unknown>) => GoogleAutocomplete };
   };
 };
 type GoogleMapInstance = { setCenter: (center: LatLng) => void; setZoom: (zoom: number) => void; getStreetView: () => GoogleStreetView; addListener?: (event: string, callback: (event: { latLng?: { lat: () => number; lng: () => number } }) => void) => GoogleListener };
@@ -31,6 +32,7 @@ type GooglePolygon = GoogleOverlay & { getPath: () => { getArray: () => Array<{ 
 type GoogleListener = { remove: () => void };
 type GoogleStreetView = { setPosition: (position: LatLng) => void; setVisible: (visible: boolean) => void };
 type GoogleGeocoder = { geocode: (request: { address: string }, callback: (results: Array<{ geometry: { location: { lat: () => number; lng: () => number } } }>, status: string) => void) => void };
+type GoogleAutocomplete = { addListener: (event: string, callback: () => void) => GoogleListener; getPlace: () => { name?: string; formatted_address?: string; geometry?: { location?: { lat: () => number; lng: () => number } } } };
 
 const mapCenter: LatLng = { lat: 5, lng: 20 };
 const googleMapStyles = [
@@ -110,7 +112,7 @@ function simulatedRoutePath(start: LatLng, target: LatLng, hazards: Hazard[]): L
   return path;
 }
 
-function ResidentMapSurface({ location, hazards, shelters, zones, selectedRoute, ready, searchRequest, searchQuery, zoomRequest, streetViewRequest, onSearchResult, onSearchError }: { location: LatLng | null; hazards: Hazard[]; shelters: Shelter[]; zones: Zone[]; selectedRoute: ResidentRoute | null; ready: boolean; searchRequest: number; searchQuery: string; zoomRequest: number; streetViewRequest: number; onSearchResult: (point: LatLng) => void; onSearchError: (message: string) => void }) {
+function ResidentMapSurface({ location, hazards, shelters, zones, selectedRoute, ready, searchRequest, searchQuery, searchPoint, zoomRequest, streetViewRequest, onSearchResult, onSearchError }: { location: LatLng | null; hazards: Hazard[]; shelters: Shelter[]; zones: Zone[]; selectedRoute: ResidentRoute | null; ready: boolean; searchRequest: number; searchQuery: string; searchPoint: LatLng | null; zoomRequest: number; streetViewRequest: number; onSearchResult: (point: LatLng) => void; onSearchError: (message: string) => void }) {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<GoogleMapInstance | null>(null);
   const overlays = useRef<GoogleOverlay[]>([]);
@@ -164,6 +166,13 @@ function ResidentMapSurface({ location, hazards, shelters, zones, selectedRoute,
   }, [location]);
 
   useEffect(() => {
+    if (searchPoint && mapInstance.current) {
+      mapInstance.current.setCenter(searchPoint);
+      mapInstance.current.setZoom(15);
+    }
+  }, [searchPoint]);
+
+  useEffect(() => {
     const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
     if (!mapsApi || !mapInstance.current || searchRequest <= lastSearchRequest.current || !searchQuery.trim()) return;
     lastSearchRequest.current = searchRequest;
@@ -213,6 +222,7 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
   const [searchRequest, setSearchRequest] = useState(0);
   const [zoomRequest, setZoomRequest] = useState(0);
   const [streetViewRequest, setStreetViewRequest] = useState(0);
+  const [selectedPlace, setSelectedPlace] = useState<LatLng | null>(null);
   const [locationPromptOpen, setLocationPromptOpen] = useState(true);
   const [profileOpen, setProfileOpen] = useState(false);
   const [residentName, setResidentName] = useState("");
@@ -231,6 +241,26 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
     }
     void loadPublicData();
   }, [apiBaseUrl]);
+
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const mapsApi = (window as Window & { google?: GoogleMapsApi }).google;
+    if (!mapsReady || !mapsApi?.maps.places?.Autocomplete || !searchInputRef.current) return;
+    const autocomplete = new mapsApi.maps.places.Autocomplete(searchInputRef.current, { fields: ["formatted_address", "geometry", "name"] });
+    const listener = autocomplete.addListener("place_changed", () => {
+      const place = autocomplete.getPlace();
+      const placeLocation = place.geometry?.location;
+      if (!placeLocation) {
+        setRouteMessage("That place does not have a map location.");
+        return;
+      }
+      setSearchQuery(place.formatted_address || place.name || "");
+      setSelectedPlace({ lat: placeLocation.lat(), lng: placeLocation.lng() });
+      setRouteMessage("");
+    });
+    return () => listener.remove();
+  }, [mapsReady]);
 
   function shareLocation() {
     if (!navigator.geolocation) {
@@ -271,8 +301,8 @@ export default function ResidentExperience({ apiBaseUrl }: { apiBaseUrl: string 
 
   return (
     <main className="resident-shell">
-      {(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY) && <Script src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY}`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
-      <div className="resident-map-panel"><form className="resident-map-searchbar" onSubmit={(event) => { event.preventDefault(); if (searchQuery.trim()) setSearchRequest((current) => current + 1); }}><button className="resident-map-menu" type="button" aria-label="Open map menu">☰</button><input aria-label="Search places, addresses, or businesses" placeholder="Search places, addresses, or businesses..." value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} /><button className="resident-map-search" type="submit" aria-label="Search map">⌕</button></form><div className="resident-map-tools"><button type="button" aria-label="Show map layers" title="Map layers">Layers</button><button type="button" aria-label="Center on my location" title="My location" onClick={shareLocation}>My location</button><button type="button" aria-label="Open Street View" title="Street view" onClick={() => location ? setStreetViewRequest((current) => current + 1) : setRouteMessage("Share your location first to open Street View.")}>Street view</button><button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => setZoomRequest((current) => current + 1)}>+</button><button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => setZoomRequest((current) => current - 1)}>−</button></div><ResidentMapSurface location={location} hazards={hazards} shelters={shelters} zones={zones} selectedRoute={selectedRoute} ready={mapsReady} searchRequest={searchRequest} searchQuery={searchQuery} zoomRequest={zoomRequest} streetViewRequest={streetViewRequest} onSearchResult={() => setRouteMessage("")} onSearchError={setRouteMessage} /></div>
+      {(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY) && <Script src={`https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY}&loading=async&libraries=places`} strategy="afterInteractive" onLoad={() => setMapsReady(true)} />}
+      <div className="resident-map-panel"><form className="resident-map-searchbar" onSubmit={(event) => { event.preventDefault(); if (searchQuery.trim()) setSearchRequest((current) => current + 1); }}><button className="resident-map-menu" type="button" aria-label="Open map menu">☰</button><input ref={searchInputRef} aria-label="Search places, addresses, or businesses" placeholder="Search places, addresses, or businesses..." value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setSelectedPlace(null); }} /><button className="resident-map-search" type="submit" aria-label="Search map">⌕</button></form><div className="resident-map-tools"><button type="button" aria-label="Show map layers" title="Map layers">Layers</button><button type="button" aria-label="Center on my location" title="My location" onClick={shareLocation}>My location</button><button type="button" aria-label="Open Street View" title="Street view" onClick={() => location ? setStreetViewRequest((current) => current + 1) : setRouteMessage("Share your location first to open Street View.")}>Street view</button><button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => setZoomRequest((current) => current + 1)}>+</button><button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => setZoomRequest((current) => current - 1)}>−</button></div><ResidentMapSurface location={location} hazards={hazards} shelters={shelters} zones={zones} selectedRoute={selectedRoute} ready={mapsReady} searchRequest={searchRequest} searchQuery={searchQuery} searchPoint={selectedPlace} zoomRequest={zoomRequest} streetViewRequest={streetViewRequest} onSearchResult={() => setRouteMessage("")} onSearchError={setRouteMessage} /></div>
       {locationPromptOpen && <div className="resident-dialog-backdrop"><section className="resident-dialog" role="dialog" aria-modal="true" aria-labelledby="location-dialog-title"><span className="resident-dialog-icon">◎</span><h2 id="location-dialog-title">Share your location</h2><p>We use your location to show nearby hazards and safe places.</p><div className="resident-dialog-actions"><button type="button" className="resident-dialog-primary" onClick={shareLocation}>Use my location</button><button type="button" className="resident-dialog-secondary" onClick={() => setLocationPromptOpen(false)}>Skip for now</button></div></section></div>}
       {profileOpen && <div className="resident-dialog-backdrop"><form className="resident-dialog" onSubmit={(event) => { event.preventDefault(); setProfileOpen(false); }}><span className="resident-dialog-icon">+</span><h2>Your details</h2><p>Add your name and phone so responders can identify you if you request help.</p><label>Name<input required value={residentName} onChange={(event) => setResidentName(event.target.value)} /></label><label>Phone number<input required type="tel" value={residentPhone} onChange={(event) => setResidentPhone(event.target.value)} /></label><div className="resident-dialog-actions"><button type="submit" className="resident-dialog-primary">Save details</button><button type="button" className="resident-dialog-secondary" onClick={() => setProfileOpen(false)}>Cancel</button></div></form></div>}
       <section className="resident-hero"><div className="resident-nav"><div className="resident-brand"><span className="resident-mark">+</span><strong>SafePath <b>AI</b></strong><span className="live-chip"><i /> LIVE SAFETY GUIDE</span></div><div className="resident-actions"><label className="language-select"><span>Language</span><select value={language} onChange={(event) => setLanguage(event.target.value)}><option>English</option><option>Swahili</option></select></label><button className="admin-link" onClick={() => router.push("/admin")}>Operator access</button></div></div><div className="resident-intro"><span className="eyebrow light-eyebrow">FOR PEOPLE IN THE AREA</span><h1>{copy.title}</h1><p>{copy.subtitle}</p><div className="resident-actions-row"><button className="location-button" onClick={shareLocation}>{location ? "✓ " : "◎ "}{location ? locationLabel : copy.share}</button><button className="route-button" onClick={findRoutes} disabled={loadingRoutes}>{loadingRoutes ? "Checking routes..." : copy.route} <span>→</span></button></div><small className="location-note">{location ? `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}` : "Your location stays on this device until you choose a route."}</small></div></section>
